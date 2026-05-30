@@ -10,13 +10,18 @@
     "./cvssVectors": "./src/cvssVectors.js",
     "./signatures": "./src/signatures.js",
     "./severity": "./src/severity.js",
-    "./queues": "./src/queues.js"
+    "./queues": "./src/queues.js",
+    "./models": "./src/models/index.js"
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "dependencies": {
+    "mongoose": "^8.9.3"
+  },
   "devDependencies": {
+    "mongodb-memory-server": "^10.1.2",
     "vitest": "^2.1.8"
   }
 }
