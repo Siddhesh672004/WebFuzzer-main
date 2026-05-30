@@ -6,6 +6,8 @@ import { crawl } from '../engine/crawler.js';
 import { analyzePassive } from '../engine/passiveAnalyzer.js';
 import { scanExposedFiles } from '../engine/exposedFiles.js';
 import { fingerprint } from '../engine/techFingerprinter.js';
+import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
+import { testAuth } from '../engine/authTester.js';
 import { childLogger } from '../logger.js';
 
 // Scan runner — the orchestrator that turns a queued scan into findings. Fans
@@ -38,7 +40,7 @@ export class ScanRunner {
     this.cfg = deps.config || {};
     this.models = deps.models || { Scan, Endpoint, Vulnerability };
     this.publish = deps.publish || (() => {});
-    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech'];
+    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech', 'fuzzer', 'auth'];
 
     const limiter = new RateLimiter(this.cfg.rateLimit || 10);
     this.http =
@@ -174,24 +176,77 @@ export class ScanRunner {
     await this.pushProgress('tech');
   }
 
+  async runFuzzer(endpoints = []) {
+    this.setModule('fuzzer', 'running');
+    let totalPayloadsSent = 0;
+    const endpointsToFuzz = endpoints.length > 0 ? endpoints : [];
+
+    for (let i = 0; i < endpointsToFuzz.length; i++) {
+      const endpoint = endpointsToFuzz[i];
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const { findings, payloadsSent } = await fuzzEndpoint(endpoint, this.http, {
+          maxPayloads: 50,
+          onFinding: (f) => this.saveFindings([f]),
+          onProgress: () => {
+            totalPayloadsSent += 1;
+            this.progress.fuzzer = Math.round(((i + 1) / endpointsToFuzz.length) * 100);
+          },
+        });
+        totalPayloadsSent += payloadsSent;
+        await this.saveFindings(findings);
+      } catch (err) {
+        log.warn({ err: err.message, url: endpoint.url }, 'fuzz endpoint failed');
+      }
+    }
+
+    await this.models.Scan.updateOne(
+      { _id: this.scanId },
+      { $set: { 'progress.payloadsSent': totalPayloadsSent } },
+    ).catch(() => {});
+
+    this.progress.fuzzer = 100;
+    this.setModule('fuzzer', 'completed');
+    await this.pushProgress('fuzzer');
+  }
+
+  async runAuth() {
+    this.setModule('auth', 'running');
+    try {
+      const { findings } = await testAuth(this.targetUrl, this.http);
+      await this.saveFindings(findings);
+    } catch (err) {
+      log.warn({ err: err.message }, 'auth tester failed');
+    }
+    this.progress.auth = 100;
+    this.setModule('auth', 'completed');
+    await this.pushProgress('auth');
+  }
+
   /** Run the full scan. Returns a summary. */
   async run() {
     this.emit(SSE_EVENTS.STATUS, { status: 'running' });
     await this.models.Scan.updateOne({ _id: this.scanId }, { $set: { status: 'running', 'stats.startTime': new Date() } }).catch(() => {});
 
-    const runners = {
-      crawler: () => this.runCrawler(),
-      passive: () => this.runPassive(),
-      exposed: () => this.runExposed(),
-      tech: () => this.runTech(),
-    };
+    // Crawler runs first — its output feeds the fuzzer.
+    let crawledEndpoints = [];
+    if (this.modules.includes('crawler')) {
+      crawledEndpoints = await this.runCrawler().catch((err) => {
+        log.error({ err: err.message }, 'crawler failed');
+        return [];
+      });
+    }
 
-    // Modules run concurrently; all share the one rate limiter inside http.
-    const selected = this.modules.filter((m) => runners[m]);
-    const results = await Promise.allSettled(selected.map((m) => runners[m]()));
+    // All other modules run concurrently after the crawler.
+    const concurrentRunners = [];
+    if (this.modules.includes('passive')) concurrentRunners.push(() => this.runPassive());
+    if (this.modules.includes('exposed')) concurrentRunners.push(() => this.runExposed());
+    if (this.modules.includes('tech')) concurrentRunners.push(() => this.runTech());
+    if (this.modules.includes('fuzzer')) concurrentRunners.push(() => this.runFuzzer(crawledEndpoints));
+    if (this.modules.includes('auth')) concurrentRunners.push(() => this.runAuth());
 
-    const failed = results.filter((r) => r.status === 'rejected');
-    failed.forEach((r) => log.error({ err: r.reason?.message }, 'module failed'));
+    const results = await Promise.allSettled(concurrentRunners.map((fn) => fn()));
+    results.filter((r) => r.status === 'rejected').forEach((r) => log.error({ err: r.reason?.message }, 'module failed'));
 
     const status = 'completed';
     const endTime = new Date();
@@ -204,11 +259,16 @@ export class ScanRunner {
           'stats.endTime': endTime,
           'stats.totalEndpoints': this.endpointCount,
           'stats.totalVulnerabilities': this.vulnCount,
-          'stats.critical': this.counts.critical,
-          'stats.high': this.counts.high,
-          'stats.medium': this.counts.medium,
-          'stats.low': this.counts.low,
-          'stats.informational': this.counts.informational,
+          'stats.critical': this.counts.critical || 0,
+          'stats.high': this.counts.high || 0,
+          'stats.medium': this.counts.medium || 0,
+          'stats.low': this.counts.low || 0,
+          'stats.informational': this.counts.informational || 0,
+          'stats.securityScore': Math.max(0, 100
+            - (this.counts.critical || 0) * 20
+            - (this.counts.high || 0) * 10
+            - (this.counts.medium || 0) * 5
+            - (this.counts.low || 0) * 2),
         },
       },
     ).catch(() => {});

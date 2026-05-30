@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { Scan, Vulnerability, Report } from '@smartfuzz/shared/models';
 import { asyncHandler, notFound, forbidden, badRequest } from '../middleware/error.middleware.js';
-import { buildReportJson, buildReportHtml, buildReportCsv, buildReportMarkdown } from '../../../worker/src/scoring/reportGenerator.js';
+import { buildReportJson, buildReportHtml, buildReportCsv, buildReportMarkdown, buildReportPdf } from '../../../worker/src/scoring/reportGenerator.js';
 
 // Report controller — generates and caches reports for completed scans.
 // The report is built on first request and stored in the Report collection.
@@ -87,4 +87,13 @@ export const getReportMarkdown = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/markdown');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(md);
+});
+
+export const getReportPdf = asyncHandler(async (req, res) => {
+  const { scan, report } = await getOrBuildReport(req.params.scanId, req.user.id);
+  const pdfBuffer = await buildReportPdf(report.jsonContent);
+  const filename = `SmartFuzz_Report_${scan.targetDomain}_Scan${scan.scanNumber}.pdf`;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(pdfBuffer);
 });
