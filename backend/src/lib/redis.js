@@ -38,9 +38,24 @@ export function setRedisForTests(fake) {
   override = fake;
 }
 
+// Dedicated subscriber connection (a Redis connection in subscribe mode can't
+// run other commands, so SSE streaming uses its own). Lazily created.
+let subscriber = null;
+export function getSubscriber() {
+  if (override) return override; // tests inject a fake with duplicate()/subscribe()
+  if (subscriber) return subscriber;
+  subscriber = new IORedis(redisOptions());
+  subscriber.on('error', (err) => log.error({ err }, 'Redis subscriber error'));
+  return subscriber;
+}
+
 export async function closeRedis() {
   if (client) {
     await client.quit().catch(() => client.disconnect());
     client = null;
+  }
+  if (subscriber) {
+    await subscriber.quit().catch(() => subscriber.disconnect());
+    subscriber = null;
   }
 }

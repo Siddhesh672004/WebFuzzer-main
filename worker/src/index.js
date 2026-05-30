@@ -5,6 +5,8 @@ import { getRedis, closeRedis } from './queue/connection.js';
 import { registerWorker, closeWorkers } from './queue/workerFactory.js';
 import { closeQueues } from './queue/queues.js';
 import { QUEUES } from '@smartfuzz/shared/queues';
+import { ScanRunner } from './scan/scanRunner.js';
+import { publishProgress, closePublisher } from './scan/publisher.js';
 
 // Worker process bootstrap. Connects to Mongo + Redis and registers a worker
 // per scanning-module queue. Handlers are placeholders for now — Phase 2+
@@ -41,7 +43,20 @@ export async function start() {
   });
   registerWorker(QUEUES.AUTH, placeholder('authTester'));
   registerWorker(QUEUES.TECH, placeholder('techFingerprinter'));
-  registerWorker(QUEUES.ORCHESTRATE, placeholder('orchestrator'));
+
+  // Orchestrator: consumes start-scan jobs and runs the full pipeline. This is
+  // the real handler — the per-module queues above remain for Phase 3 fan-out.
+  registerWorker(QUEUES.ORCHESTRATE, async (job) => {
+    const { scanId, targetUrl, config: scanCfg } = job.data;
+    const runner = new ScanRunner({
+      scanId,
+      targetUrl,
+      publish: publishProgress,
+      config: scanCfg || {},
+    });
+    return runner.run();
+  });
+
   registerWorker(QUEUES.REPORT, placeholder('reportGenerator'));
 
   logger.info('worker: all module workers registered');
@@ -50,6 +65,7 @@ export async function start() {
 export async function stop() {
   await closeWorkers();
   await closeQueues();
+  await closePublisher();
   await closeRedis();
   if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
   logger.info('worker: shutdown complete');

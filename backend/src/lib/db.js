@@ -17,6 +17,12 @@ let connecting = null;
  * @param {string} uri
  */
 export async function connectMongo(uri) {
+  // Wait out any in-progress disconnection before attempting to connect.
+  if (mongoose.connection.readyState === 3) {
+    await new Promise((resolve) => {
+      mongoose.connection.once('disconnected', resolve);
+    });
+  }
   if (mongoose.connection.readyState === 1) return mongoose.connection;
   if (connecting) return connecting;
 

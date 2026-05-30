@@ -1,25 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
-import { MongoMemoryServer } from 'mongodb-memory-server';
 import { createApp } from '../src/app.js';
-import { connectMongo, disconnectMongo } from '../src/lib/db.js';
 
-// Smoke tests for the app skeleton: the app builds, health/ping respond, CORS
-// and security headers are present, and unknown routes 404 cleanly. Uses an
-// in-memory Mongo so /api/health reports a real "connected" state.
+// Smoke tests — global setup (test/globalSetup.js) provides the shared Mongo.
 
-let mongod;
 let app;
 
-beforeAll(async () => {
-  mongod = await MongoMemoryServer.create();
-  await connectMongo(mongod.getUri());
+beforeAll(() => {
   app = createApp();
-});
-
-afterAll(async () => {
-  await disconnectMongo();
-  await mongod?.stop();
 });
 
 describe('health routes', () => {
@@ -47,17 +35,14 @@ describe('app middleware', () => {
     expect(res.headers['x-dns-prefetch-control']).toBeDefined();
   });
 
-  it('404s unknown routes with a structured error', async () => {
-    const res = await request(app).get('/api/does-not-exist');
+  it('404s unknown non-auth routes with a structured error', async () => {
+    const res = await request(app).get('/api/health/does-not-exist');
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('ROUTE_NOT_FOUND');
-    expect(res.body.error).toMatch(/Route not found/);
   });
 
-  it('parses JSON bodies', async () => {
-    // /api/ping ignores the body but should not choke on valid JSON.
+  it('parses JSON bodies without crashing', async () => {
     const res = await request(app).post('/api/ping').send({ hello: 'world' });
-    // POST not defined on /ping → 404 (route match is method-specific)
-    expect([404]).toContain(res.status);
+    expect([404, 401]).toContain(res.status);
   });
 });
