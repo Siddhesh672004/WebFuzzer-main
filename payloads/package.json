@@ -1,0 +1,20 @@
+{
+  "name": "@smartfuzz/payloads",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "seed": "node seed.js",
+    "setup": "node setup.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@smartfuzz/shared": "*",
+    "mongoose": "^8.9.3"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.1.2",
+    "vitest": "^2.1.8"
+  }
+}

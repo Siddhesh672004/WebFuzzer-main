@@ -12,7 +12,8 @@
     "shared",
     "backend",
     "worker",
-    "frontend"
+    "frontend",
+    "payloads"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
