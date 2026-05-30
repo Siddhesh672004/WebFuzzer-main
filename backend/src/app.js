@@ -6,6 +6,7 @@ import pinoHttp from 'pino-http';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import healthRoutes from './routes/health.routes.js';
+import authRoutes from './routes/auth.routes.js';
 import { notFoundHandler, errorHandler } from './middleware/error.middleware.js';
 
 // App factory. Builds and returns the Express app WITHOUT calling listen(), so
@@ -43,6 +44,7 @@ export function createApp() {
 
   // Routes. All API surface is namespaced under /api.
   app.use('/api', healthRoutes);
+  app.use('/api', authRoutes);
 
   // 404 + central error handler (must be last).
   app.use(notFoundHandler);

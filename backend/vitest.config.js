@@ -5,6 +5,11 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.js'],
     testTimeout: 20000, // mongodb-memory-server can be slow on first download
+    // Force the json mail transport at config-load time so the auth controller
+    // returns devOtp for tests (config is frozen on import).
+    env: {
+      MAIL_TRANSPORT: 'json',
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.js'],
