@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Intentionally-vulnerable scan targets for MANUAL / metric testing only.
+# These are NEVER used by the automated test suite (which uses mocks).
+#
+# Bring them up alongside the main stack with:
+#   docker compose -f docker-compose.yml -f docker-compose.testing.yml --profile testing up
+#
+# Then scan them from SmartFuzz with SCAN_ALLOW_PRIVATE=true set, e.g.:
+#   http://dvwa        (inside the compose network)
+#   http://localhost:8080  (from the host)
+
+services:
+  dvwa:
+    image: vulnerables/web-dvwa
+    container_name: smartfuzz-dvwa
+    profiles: ["testing"]
+    ports:
+      - "8080:80"
+
+  webgoat:
+    image: webgoat/webgoat
+    container_name: smartfuzz-webgoat
+    profiles: ["testing"]
+    ports:
+      - "8081:8080"
+
+  juiceshop:
+    image: bkimminich/juice-shop
+    container_name: smartfuzz-juiceshop
+    profiles: ["testing"]
+    ports:
+      - "8082:3000"
+
+  bwapp:
+    image: raesene/bwapp
+    container_name: smartfuzz-bwapp
+    profiles: ["testing"]
+    ports:
+      - "8083:80"

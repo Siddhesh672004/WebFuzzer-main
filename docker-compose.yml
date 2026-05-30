@@ -1,0 +1,93 @@
+version: "3.9"
+
+# SmartFuzz — full local stack. One command brings up everything:
+#   docker compose up
+#
+# Services:
+#   mongo     — primary data store (scans, vulns, payloads, reports)
+#   redis     — BullMQ job queues + OTP temporary storage
+#   backend   — Express REST API + SSE (never runs a scan itself)
+#   worker    — BullMQ workers + the scan engine (crawl/fuzz/analyze)
+#   frontend  — React + Vite (dev server in dev, static build in prod)
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: smartfuzz-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartfuzz-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: smartfuzz-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/smartfuzz
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: smartfuzz-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/smartfuzz
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: smartfuzz-frontend
+    restart: unless-stopped
+    environment:
+      - VITE_API_BASE=http://localhost:4000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:
+  redis-data:

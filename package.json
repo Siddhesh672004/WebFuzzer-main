@@ -1,0 +1,30 @@
+{
+  "name": "smartfuzz",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SmartFuzz — zero-cost, fully local, intelligent web vulnerability scanner",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "shared",
+    "backend",
+    "worker",
+    "frontend"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "test:shared": "npm run test --workspace shared",
+    "test:backend": "npm run test --workspace backend",
+    "test:worker": "npm run test --workspace worker",
+    "test:frontend": "npm run test --workspace frontend",
+    "lint": "npm run lint --workspaces --if-present",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:worker": "npm run dev --workspace worker",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "seed": "node payloads/seed.js",
+    "setup:payloads": "node payloads/setup.js"
+  }
+}
