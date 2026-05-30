@@ -2,13 +2,12 @@ import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
-// App shell. Routes are code-split with React.lazy so the Verify page loads
-// without pulling in chart/animation libraries (frontend performance plan,
-// IMPLEMENTATION_PLAN §12). Phase 1 ships Verify + a protected Dashboard;
-// Phase 5 adds the remaining pages.
-
 const Verify = lazy(() => import('./pages/Verify.jsx'));
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
+const NewScan = lazy(() => import('./pages/NewScan.jsx'));
+const ScanMonitor = lazy(() => import('./pages/ScanMonitor.jsx'));
+const ScanResults = lazy(() => import('./pages/ScanResults.jsx'));
+const Comparison = lazy(() => import('./pages/Comparison.jsx'));
 
 function PageFallback() {
   return (
@@ -18,21 +17,20 @@ function PageFallback() {
   );
 }
 
+function Protected({ children }) {
+  return <ProtectedRoute>{children}</ProtectedRoute>;
+}
+
 export default function App() {
   return (
     <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/verify" element={<Verify />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        {/* Phase 5 adds: /scan/new, /scan/:id, /results/:id, /reports,
-            /compare/:domain — each wrapped in ProtectedRoute. */}
+        <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+        <Route path="/scan/new" element={<Protected><NewScan /></Protected>} />
+        <Route path="/scan/:id" element={<Protected><ScanMonitor /></Protected>} />
+        <Route path="/results/:id" element={<Protected><ScanResults /></Protected>} />
+        <Route path="/compare/:domain" element={<Protected><Comparison /></Protected>} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
