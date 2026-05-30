@@ -6,3 +6,4 @@ export * from './severity.js';
 export * from './vulnTypes.js';
 export * from './cvssVectors.js';
 export * from './signatures.js';
+export * from './queues.js';

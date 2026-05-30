@@ -9,7 +9,8 @@
     "./vulnTypes": "./src/vulnTypes.js",
     "./cvssVectors": "./src/cvssVectors.js",
     "./signatures": "./src/signatures.js",
-    "./severity": "./src/severity.js"
+    "./severity": "./src/severity.js",
+    "./queues": "./src/queues.js"
   },
   "scripts": {
     "test": "vitest run",
