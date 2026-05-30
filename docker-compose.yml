@@ -1,30 +1,13 @@
 version: "3.9"
 
-# SmartFuzz — full local stack. One command brings up everything:
-#   docker compose up
+# SmartFuzz — Docker-only setup.
+# Uses MongoDB Atlas (from .env) + local Redis container.
 #
-# Services:
-#   mongo     — primary data store (scans, vulns, payloads, reports)
-#   redis     — BullMQ job queues + OTP temporary storage
-#   backend   — Express REST API + SSE (never runs a scan itself)
-#   worker    — BullMQ workers + the scan engine (crawl/fuzz/analyze)
-#   frontend  — React + Vite (dev server in dev, static build in prod)
+#   docker compose up --build
+#
+# First run seeds the payload library automatically via the `seed` service.
 
 services:
-  mongo:
-    image: mongo:7
-    container_name: smartfuzz-mongo
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     container_name: smartfuzz-redis
@@ -47,16 +30,21 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - MONGO_URI=mongodb://mongo:27017/smartfuzz
+      # Redis points to the container, not localhost
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # MONGO_URI comes from .env (Atlas) — NOT overridden here
     ports:
       - "4000:4000"
     depends_on:
-      mongo:
-        condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/ping').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
   worker:
     build:
@@ -66,14 +54,27 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - MONGO_URI=mongodb://mongo:27017/smartfuzz
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      # MONGO_URI comes from .env (Atlas)
     depends_on:
-      mongo:
-        condition: service_healthy
       redis:
         condition: service_healthy
+
+  seed:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: smartfuzz-seed
+    env_file: .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: ["node", "payloads/seed.js"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: "no"
 
   frontend:
     build:
@@ -81,13 +82,11 @@ services:
       dockerfile: frontend/Dockerfile
     container_name: smartfuzz-frontend
     restart: unless-stopped
-    environment:
-      - VITE_API_BASE=http://localhost:4000
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
-  mongo-data:
   redis-data:

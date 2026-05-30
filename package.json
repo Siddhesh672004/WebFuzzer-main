@@ -22,10 +22,10 @@
     "test:worker": "npm run test --workspace worker",
     "test:frontend": "npm run test --workspace frontend",
     "lint": "npm run lint --workspaces --if-present",
-    "dev:backend": "npm run dev --workspace backend",
-    "dev:worker": "npm run dev --workspace worker",
+    "dev:backend": "node --env-file=.env --watch backend/src/server.js",
+    "dev:worker": "node --env-file=.env --watch worker/src/index.js",
     "dev:frontend": "npm run dev --workspace frontend",
-    "seed": "node payloads/seed.js",
-    "setup:payloads": "node payloads/setup.js"
+    "seed": "node --env-file=.env payloads/seed.js",
+    "setup:payloads": "node --env-file=.env payloads/setup.js"
   }
 }
