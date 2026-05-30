@@ -11,7 +11,8 @@
     "./signatures": "./src/signatures.js",
     "./severity": "./src/severity.js",
     "./queues": "./src/queues.js",
-    "./models": "./src/models/index.js"
+    "./models": "./src/models/index.js",
+    "./progress": "./src/progress.js"
   },
   "scripts": {
     "test": "vitest run",
