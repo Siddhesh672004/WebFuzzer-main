@@ -1,11 +1,29 @@
-# SmartFuzz — Docker-only setup.
-# Uses MongoDB Atlas (from .env) + local Redis container.
+# SmartFuzz — self-contained Docker setup.
+# Bundles MongoDB + Redis locally so the whole stack runs offline with no
+# external database or IP whitelisting required:
 #
 #   docker compose up --build
 #
-# First run seeds the payload library automatically via the `seed` service.
+# MONGO_URI / REDIS_HOST are overridden per-service below (these take precedence
+# over .env), so your .env can keep an Atlas URI for non-Docker use without
+# affecting the containers. First run seeds the payload library via `seed`.
 
 services:
+  mongo:
+    image: mongo:7
+    container_name: smartfuzz-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   redis:
     image: redis:7-alpine
     container_name: smartfuzz-redis
@@ -28,10 +46,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Redis points to the container, not localhost
+      # Point at the bundled containers, not localhost / Atlas (overrides .env).
+      - MONGO_URI=mongodb://mongo:27017/smartfuzz
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      # MONGO_URI comes from .env (Atlas) — NOT overridden here
       # Shared screenshot evidence directory (written by worker, served by backend)
       - SCREENSHOT_DIR=/var/lib/smartfuzz/screenshots
     ports:
@@ -39,6 +57,8 @@ services:
     volumes:
       - screenshots-data:/var/lib/smartfuzz/screenshots
     depends_on:
+      mongo:
+        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
@@ -56,9 +76,9 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      - MONGO_URI=mongodb://mongo:27017/smartfuzz
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      # MONGO_URI comes from .env (Atlas)
       # Shared screenshot evidence directory (written here, served by backend)
       - SCREENSHOT_DIR=/var/lib/smartfuzz/screenshots
       # Use the system Chromium installed in the worker image (see worker/Dockerfile).
@@ -68,6 +88,8 @@ services:
     volumes:
       - screenshots-data:/var/lib/smartfuzz/screenshots
     depends_on:
+      mongo:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -78,10 +100,13 @@ services:
     container_name: smartfuzz-seed
     env_file: .env
     environment:
+      - MONGO_URI=mongodb://mongo:27017/smartfuzz
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     command: ["node", "payloads/seed.js"]
     depends_on:
+      mongo:
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: "no"
@@ -99,5 +124,6 @@ services:
         condition: service_healthy
 
 volumes:
+  mongo-data:
   redis-data:
   screenshots-data:
