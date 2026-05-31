@@ -401,8 +401,12 @@ each hop (max 5).
   stable identity is what makes "did my fix hold?" answerable across scans.
 - **Reports** ([reportGenerator.js](worker/src/scoring/reportGenerator.js)) —
   `buildReportJson()` enriches findings with fix guides + comparison, then
-  `buildReportHtml` (standalone, embedded CSS), `buildReportCsv`, `buildReportMarkdown`,
-  and `buildReportPdf` (**pdfkit**, pure-JS, no headless browser) render the formats.
+  `buildReportHtml` and `buildReportPdf` render a professional pen-test report (cover
+  page, executive summary, risk matrix, findings-by-type, per-finding detail incl.
+  masked secrets + screenshot notes, remediation guidance), while `buildReportCsv` and
+  `buildReportMarkdown` produce the lightweight formats. The PDF uses **pdfkit**
+  (pure-JS, no headless browser) so report generation stays deterministic and
+  dependency-light.
 
 ---
 
@@ -417,17 +421,26 @@ SmartFuzz is built to be safe to run and safe to operate against authorized targ
   `SCAN_ALLOW_PRIVATE=true` is the explicit, opt-in escape hatch for local lab targets.
 - **Shared rate limiter** ([rateLimiter.js](worker/src/safety/rateLimiter.js)) — a
   token-bucket (`take()`/`tryTake()`) shared across all modules of a scan, default
-  10 req/s, so "six modules at once" can't become a flood.
+  10 req/s, so "seven modules at once" can't become a flood.
 - **Consent gate + audit** — `POST /api/scans` requires `authorized: true`; the
   `Scan.consent` subdocument records user, timestamp, IP, and user-agent.
 - **Resource caps** — per-request timeout, per-scan wall-clock budget
   (`SCAN_WALLCLOCK_BUDGET_MS`), 2 MB body cap, crawler depth/endpoint ceilings.
 - **Soft-404 detection** before flagging any exposed file, to suppress false positives
   on servers that 200 everything.
+- **Masked secrets, never stored raw** — the JS secret scanner stores only a
+  `first-8-chars + ****` preview of any matched credential; the full secret value never
+  touches the database or the report.
+- **Screenshot capture is opt-in and SSRF-guarded** — disabled unless
+  `SCAN_SCREENSHOTS=true`. When enabled, `assertSafeUrl()` validates the proof URL
+  *before* Puppeteer launches, and capture runs fully non-blocking so it can never delay
+  or fail a scan. Note: Puppeteer runs Chromium with `--no-sandbox` and navigates
+  attacker-influenced URLs, so only enable it against authorized targets.
 - **SmartFuzz protecting itself** — helmet, strict CORS to `FRONTEND_ORIGIN`,
   rate-limited auth routes (30 req / 15 min / IP), zod validation on every input, JWT in
-  an httpOnly + `sameSite=strict` cookie, pino redaction of secrets/tokens, and no
-  secrets shipped to the client.
+  an httpOnly + `sameSite=strict` cookie, the screenshot route's filename allowlist +
+  path-traversal guard, pino redaction of secrets/tokens, and no secrets shipped to the
+  client.
 
 ---
 
@@ -445,7 +458,9 @@ MongoDB collections (Mongoose schemas in [shared/src/models/](shared/src/models/
 - **Vulnerability** — the finding: `type`, `subtype`, `severity`, `cvssScore`,
   `cvssVector`, `url`, `param`, `payload`, `evidence`, `owaspRef`, `cveId`, inline
   `request`/`response` proof, and the stable `signature` (unique per `scanId`).
-  `isFixed` is flipped by the comparison engine on rescans.
+  `isFixed` is flipped by the comparison engine on rescans. Exposed-secret findings add
+  `secretType`/`jsFileUrl`/`lineNumber`/`matchPreview` (masked); XSS/open-redirect
+  findings may add `screenshotFile`/`screenshotDialogFired`/`screenshotDialogMessage`.
 - **Payload** — `source` (seclists/payloadsallthethings/fuzzdb/nikto/custom), `type`,
   `value`, `categories[]`, `tags[]`, `successCount` (for prioritization), `isActive`.
 - **Report** — denormalized snapshot of a completed scan: `summary`, `comparison`,
@@ -459,17 +474,20 @@ MongoDB collections (Mongoose schemas in [shared/src/models/](shared/src/models/
 |------|------|
 | [shared/src/queues.js](shared/src/queues.js) | `QUEUES`/`JOBS`/`PRIORITY` — the single source of truth both processes agree on |
 | [shared/src/progress.js](shared/src/progress.js) | `progressChannel(id)` + `SSE_EVENTS` (`progress`, `finding`, `module`, `status`, `done`) |
-| [shared/src/vulnTypes.js](shared/src/vulnTypes.js) | 38-type registry keyed to OWASP Top 10 (2021) |
+| [shared/src/vulnTypes.js](shared/src/vulnTypes.js) | 39-type registry keyed to OWASP Top 10 (2021) |
 | [shared/src/cvssVectors.js](shared/src/cvssVectors.js) | Canonical CVSS:3.1 vector + expected score per type/subtype |
 | [backend/src/app.js](backend/src/app.js) | Express factory: helmet → cors → json → cookies → pino → routes → error handlers |
 | [backend/src/controllers/scan.controller.js](backend/src/controllers/scan.controller.js) | Scan create/list/get/delete + the SSE progress endpoint |
+| [backend/src/routes/screenshots.routes.js](backend/src/routes/screenshots.routes.js) | Auth-guarded `/api/screenshots/:filename` — serves screenshot evidence PNGs with filename allowlist + traversal guard |
 | [backend/src/services/otpStore.js](backend/src/services/otpStore.js) | Redis-backed, bcrypt-hashed OTP with attempts + cooldown |
 | [backend/src/lib/queue.js](backend/src/lib/queue.js) | `enqueueScan()` → BullMQ `start-scan` job |
 | [worker/src/index.js](worker/src/index.js) | Registers a worker per queue + the orchestrator handler |
-| [worker/src/scan/scanRunner.js](worker/src/scan/scanRunner.js) | The orchestrator: runs all six modules, persists findings, emits progress |
+| [worker/src/scan/scanRunner.js](worker/src/scan/scanRunner.js) | The orchestrator: runs all seven modules, persists findings, emits progress, fires opt-in screenshots |
+| [worker/src/engine/jsSecretScanner.js](worker/src/engine/jsSecretScanner.js) | Scans crawled JS files for ~38 secret patterns; masks every match (`first-8 + ****`) |
+| [worker/src/services/screenshotCapture.js](worker/src/services/screenshotCapture.js) | Puppeteer screenshot evidence (opt-in via `SCAN_SCREENSHOTS`, SSRF-guarded, lazy import) |
 | [worker/src/engine/httpClient.js](worker/src/engine/httpClient.js) | The single guarded, rate-limited, capped outbound client |
 | [worker/src/scoring/cvss.js](worker/src/scoring/cvss.js) | CVSS v3.1 calculator with Appendix-A roundup |
-| [worker/src/knowledge/fixGuides.js](worker/src/knowledge/fixGuides.js) | 38 fix guides (what/why/steps/before/after/verify), one per emittable type |
+| [worker/src/knowledge/fixGuides.js](worker/src/knowledge/fixGuides.js) | 39 fix guides (what/why/steps/before/after/verify), one per emittable type |
 | [worker/src/knowledge/cveDatabase.js](worker/src/knowledge/cveDatabase.js) | Curated local tech→CVE map (jQuery, Bootstrap, lodash, WordPress, Drupal, PHP, Apache, nginx, OpenSSL, …) |
 | [payloads/curated.js](payloads/curated.js) | 59 built-in payloads so scans work with zero setup |
 | [frontend/nginx.conf](frontend/nginx.conf) | SPA fallback + `/api` proxy tuned for SSE (`proxy_buffering off`, 3600s read timeout) |
@@ -478,12 +496,17 @@ MongoDB collections (Mongoose schemas in [shared/src/models/](shared/src/models/
 
 ## External integrations
 
-SmartFuzz is deliberately **dependency-light at runtime** — there are no paid APIs and
-no cloud calls during a scan.
+SmartFuzz makes **no paid-API and no cloud calls during a scan** — detection runs
+entirely against the target and bundled local data. The one heavier optional dependency
+is a headless Chromium (Puppeteer) for screenshot evidence, which is **off by default**.
 
 - **Email (Nodemailer)** — the only outbound integration. **Ethereal** (throwaway SMTP,
   logs a preview URL) in dev; **Gmail** SMTP via `GMAIL_USER` + `GMAIL_APP_PASSWORD` in
   prod; a `json` transport in tests.
+- **Headless Chromium (Puppeteer, opt-in)** — used only for screenshot evidence when
+  `SCAN_SCREENSHOTS=true`. Imported lazily, so the default build/tests never require
+  Chromium; the Docker worker image installs the system Chromium via `apk`. Navigates the
+  target itself (no third-party service), SSRF-guarded first.
 - **Open-source wordlists (data, not runtime)** — `payloads/setup.js` can shallow/sparse-
   clone **SecLists**, **PayloadsAllTheThings**, and **FuzzDB**; `seed.js` parses them
   into the `Payload` collection. SmartFuzz works without this via the committed curated
@@ -547,7 +570,8 @@ Grouped by purpose (see [.env.example](.env.example) for full defaults):
 | **OTP** | `OTP_TTL_SECONDS` (600), `OTP_MAX_ATTEMPTS` (3), `OTP_RESEND_COOLDOWN_SECONDS` (60) |
 | **Mail** | `MAIL_TRANSPORT` (ethereal\|gmail\|json), `MAIL_FROM`, `GMAIL_USER`, `GMAIL_APP_PASSWORD` |
 | **Scan safety** | `SCAN_RATE_LIMIT` (10), `SCAN_MAX_DEPTH` (3), `SCAN_MAX_ENDPOINTS` (500), `SCAN_REQUEST_TIMEOUT_MS` (10000), `SCAN_WALLCLOCK_BUDGET_MS` (1800000), `SCAN_MAX_BODY_BYTES` (2097152), `SCAN_ALLOW_PRIVATE` (false) |
-| **Worker** | `WORKER_FUZZ_CONCURRENCY` (5) |
+| **Screenshots** | `SCAN_SCREENSHOTS` (false — opt-in Puppeteer evidence), `SCREENSHOT_DIR` (`/tmp/smartfuzz-screenshots`; shared worker↔backend volume), `PUPPETEER_EXECUTABLE_PATH` (set to system Chromium in Docker) |
+| **Worker** | `WORKER_FUZZ_CONCURRENCY` (5), `WORKER_FANOUT` (false) |
 | **Logging** | `LOG_LEVEL` (info) |
 
 Both backend and worker validate their env with **zod** at startup and **fail fast** on
@@ -581,10 +605,11 @@ Honest assessment of where the codebase stands today:
   fully realized; modules run concurrently *within one job* via `Promise`, not as
   distributed jobs. Adaptive `PRIORITY` (mutations jumping the queue) is defined in
   `shared/queues.js` but not yet exercised end-to-end.
-- **Detection breadth vs. the registry.** 38 vuln *types* and CVSS vectors are defined,
+- **Detection breadth vs. the registry.** 39 vuln *types* and CVSS vectors are defined,
   but several (XXE, stored XSS confirmation, session fixation, JWT `alg:none`, NoSQL/LDAP/
   XPath injection) are catalogued without full active detectors yet. The fuzzer's
-  confirmed detectors center on SQLi, XSS, path traversal, RCE, SSTI, and open redirect.
+  confirmed detectors center on SQLi, XSS, path traversal, RCE, SSTI, and open redirect;
+  the passive, exposed-file, tech-fingerprint, auth, and JS-secret modules cover the rest.
 - **Sensitive-paths list is 32 entries**, not the "150+" the PRD aspired to —
   easy to extend in [sensitivePaths.js](worker/src/knowledge/sensitivePaths.js).
 - **CVE database is illustrative.** ~10 tech families with one or two CVEs each, by design
