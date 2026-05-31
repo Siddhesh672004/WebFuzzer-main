@@ -59,20 +59,30 @@ worked on the next scan.
 - **Email-OTP login** — no passwords stored; a 6-digit code, then a JWT in an
   httpOnly cookie.
 - **One-click scan** with an explicit authorization gate (logged for audit).
-- **Six scanning modules** — crawler, passive analyzer, exposed-file scanner, tech
-  fingerprinter, active payload fuzzer, auth tester — coordinated by one orchestrator
-  behind a shared rate limiter.
+- **Seven scanning modules** — crawler, passive analyzer, exposed-file scanner, tech
+  fingerprinter, active payload fuzzer, auth tester, and a JavaScript secret scanner —
+  coordinated by one orchestrator behind a shared rate limiter.
 - **Live progress** streamed to the browser over Server-Sent Events (SSE): progress
   %, per-module status, and findings as they're confirmed.
 - **CVSS v3.1 scoring** computed with the FIRST.org Appendix-A integer roundup
   (scope-dependent privileges handled correctly), mapped to severity bands and a
   0–100 security score.
-- **38 vulnerability types** across the OWASP Top 10 (2021), each with a fix guide.
+- **39 vulnerability types** across the OWASP Top 10 (2021), each with a fix guide.
+- **Exposed-secret detection** — fetches every same-host JavaScript file the crawler
+  finds and scans it for ~38 secret patterns (AWS/Google/Stripe/GitHub keys, DB
+  connection strings, private keys, JWTs, hardcoded passwords). Only a masked preview
+  (first 8 chars + `****`) is ever stored — never the full secret.
+- **Screenshot evidence (opt-in)** — for confirmed XSS / open-redirect findings, a
+  headless Chromium (Puppeteer) captures a browser screenshot as visual proof. Off by
+  default (`SCAN_SCREENSHOTS`); SSRF-guarded before navigation.
 - **Step-by-step fix guidance** — what/why/how, before & after code, and a verify step.
 - **Rescan & compare** — every finding gets a stable signature so SmartFuzz can label
   it `FIXED` / `PERSISTS` (VULNERABLE) / `NEW` / `REGRESSED` across scans and chart the
   security-score trend.
-- **Reports in four formats** — JSON, standalone HTML, CSV, Markdown, and PDF (pdfkit).
+- **Professional reports in five formats** — JSON, standalone HTML, CSV, Markdown, and
+  PDF. The HTML/PDF layouts are a full pen-test report: cover page, executive summary,
+  risk matrix, per-finding detail (incl. masked secrets + screenshots), and remediation
+  guidance. PDF is rendered with **pdfkit** (pure-JS, no headless browser).
 
 **Real-world use cases.**
 
@@ -90,7 +100,7 @@ worked on the next scan.
 |----------|------|
 | Frontend | React 18, Vite 5, Tailwind 3.4, React Router 6, React Query 5 (`@tanstack/react-query`), Recharts, Framer Motion, Lucide icons, `@tanstack/react-virtual` |
 | Backend  | Node 20 LTS, Express 4, Mongoose 8, BullMQ 5, ioredis, Nodemailer, jsonwebtoken, bcryptjs, zod, helmet, cors, cookie-parser, express-rate-limit, pino / pino-http |
-| Worker   | Node 20, BullMQ 5, Mongoose 8, axios, cheerio, ipaddr.js, pdfkit, pino |
+| Worker   | Node 20, BullMQ 5, Mongoose 8, axios, cheerio, ipaddr.js, pdfkit, Puppeteer (opt-in screenshots), pino |
 | Data     | MongoDB 7 (Mongoose ODM), Redis 7 (BullMQ queues + OTP store + pub/sub) |
 | Testing  | Vitest, supertest, mongodb-memory-server, nock, Testing Library, Playwright |
 | Infra    | Docker + Docker Compose, nginx (static serving + API/SSE proxy) |
@@ -116,7 +126,7 @@ were ported clean-room to JS.
                                   ┌───────────┐               ┌──────────────────┐
                                   │  MongoDB  │ ◄──────────── │  worker          │
                                   │ (Mongoose)│  write        │  ScanRunner +    │
-                                  └───────────┘  findings     │  6 scan modules  │
+                                  └───────────┘  findings     │  7 scan modules  │
                                                               └──────────────────┘
 ```
 
@@ -155,7 +165,7 @@ smartfuzz/
 │   └── src/
 │       ├── models/               # User, Target, Scan, Endpoint, Vulnerability, Payload, Report
 │       ├── severity.js           # bands, ranks, score penalties, severityFromScore()
-│       ├── vulnTypes.js          # 38-type registry mapped to OWASP Top 10
+│       ├── vulnTypes.js          # 39-type registry mapped to OWASP Top 10
 │       ├── cvssVectors.js        # canonical CVSS:3.1 vector per type/subtype
 │       ├── signatures.js         # stable cross-scan signature (sha1)
 │       ├── queues.js             # QUEUES, JOBS, PRIORITY constants
@@ -165,7 +175,7 @@ smartfuzz/
 │   └── src/
 │       ├── server.js  app.js  config.js  logger.js
 │       ├── controllers/          # auth, scan, report
-│       ├── routes/               # auth, scan, report, health
+│       ├── routes/               # auth, scan, report, screenshots, health
 │       ├── middleware/           # auth (JWT), error (AppError)
 │       ├── services/             # mailer (Nodemailer), otpStore (Redis+bcrypt)
 │       └── lib/                  # db, redis, queue, jwt
@@ -177,7 +187,8 @@ smartfuzz/
 │       ├── engine/               # crawler, httpClient, passiveAnalyzer, exposedFiles,
 │       │                         #   techFingerprinter, paramClassifier, payloadEngine,
 │       │                         #   payloadFuzzer, responseAnalyzer, mutationEngine,
-│       │                         #   authTester, findingFactory
+│       │                         #   authTester, jsSecretScanner, findingFactory
+│       ├── services/             # screenshotCapture (Puppeteer, opt-in)
 │       ├── safety/               # urlGuard (SSRF), rateLimiter (token bucket)
 │       ├── scoring/              # cvss, securityScore, comparison, reportGenerator
 │       └── knowledge/            # cveDatabase, fixGuides, sensitivePaths
@@ -265,12 +276,14 @@ audit snapshot (IP, user-agent, timestamp) → `enqueueScan()`
 
 **Running a scan** (worker, [scanRunner.js](worker/src/scan/scanRunner.js)):
 the `ORCHESTRATE` worker in [index.js](worker/src/index.js) builds a `ScanRunner`. It
-emits `status: running`, then **Phase 1** runs the crawler sequentially; **Phase 2**
-runs passive, exposed, tech, fuzzer, and auth — all sharing **one** `RateLimiter` and
-one `HttpClient` so concurrency can't DoS the target. Each module's findings are
-normalized by `makeFinding()`, deduped by signature, and upserted into the
-`Vulnerability` collection; the `Scan` doc's progress/stats are updated and a `done`
-event is emitted.
+emits `status: running`, then **Phase 1** runs the crawler sequentially (also collecting
+same-host `<script src>` JS URLs); **Phase 2** runs passive, exposed, tech, fuzzer, auth,
+and the JS secret scanner — all sharing **one** `RateLimiter` and one `HttpClient` so
+concurrency can't DoS the target. Each module's findings are normalized by
+`makeFinding()`, deduped by signature, and upserted into the `Vulnerability` collection;
+the `Scan` doc's progress/stats are updated and a `done` event is emitted. When
+`SCAN_SCREENSHOTS=true`, confirmed XSS / open-redirect findings additionally trigger a
+non-blocking Puppeteer screenshot (see Safety engineering).
 
 **Watching progress** (`GET /api/scans/:id/progress`):
 after ownership check, the backend sets SSE headers, subscribes a *duplicate* Redis
@@ -295,7 +308,8 @@ URL + consent ─► POST /api/scans ─► Scan(pending) in Mongo ─► BullMQ
       │                                                              │
       ▼                                                              ▼
  ScanRunner.run()                                          ┌── crawl(targetUrl) ──┐  Phase 1 (sequential)
-      │   one shared RateLimiter + HttpClient (SSRF-guarded)│   endpoints → Mongo  │
+      │   one shared RateLimiter + HttpClient (SSRF-guarded)│   endpoints + JS URLs│
+      │                                                     │   → Mongo            │
       │                                                     └──────────┬───────────┘
       │   Phase 2 (concurrent):                                        ▼
       ├── analyzePassive(headers/body) ───────────────► findings ─┐
@@ -303,7 +317,8 @@ URL + consent ─► POST /api/scans ─► Scan(pending) in Mongo ─► BullMQ
       ├── fingerprint() → matchCves() ────────────────► findings ─┤  makeFinding()
       ├── fuzzEndpoint() → analyzeResponse() ──────────► findings ─┤  → severity + CVSS
       │      └─ HIGH_INTEREST → mutate() → re-fuzz                 │  → signature
-      └── testAuth(rate-limit, default creds) ─────────► findings ─┘  → dedupe → Mongo
+      ├── testAuth(rate-limit, default creds) ─────────► findings ─┤  → dedupe → Mongo
+      └── scanJsSecrets(JS files) ────────────────────► findings ─┘  (masked previews)
       │
       ▼   publishProgress() ─► Redis "scan:progress:<id>" ─► backend SSE ─► browser
       ▼
@@ -323,17 +338,18 @@ artifacts. Throughout, progress flows worker → Redis → backend → browser o
 
 ## The scan engine in depth
 
-The six modules referenced in the PRD map to these files, all orchestrated by
+The seven engine modules map to these files, all orchestrated by
 [scanRunner.js](worker/src/scan/scanRunner.js):
 
 | # | Module | File | What it does | Technique |
 |---|--------|------|--------------|-----------|
-| 1 | **Crawler** | [crawler.js](worker/src/engine/crawler.js) | BFS same-host crawl up to `maxDepth`/`maxEndpoints`; extracts links, forms, query params | cheerio HTML parsing; URL normalization (fragment stripped, params sorted) |
+| 1 | **Crawler** | [crawler.js](worker/src/engine/crawler.js) | BFS same-host crawl up to `maxDepth`/`maxEndpoints`; extracts links, forms, query params, and `<script src>` JS URLs | cheerio HTML parsing; URL normalization (fragment stripped, params sorted) |
 | 2 | **Passive analyzer** | [passiveAnalyzer.js](worker/src/engine/passiveAnalyzer.js) | Findings from a normal response: missing HTTPS/HSTS/CSP/X-Frame/X-Content-Type, version disclosure, CORS `*`, insecure cookies, stack-trace/internal-IP/email leakage | header inspection + body regexes (ZAP-ported) |
 | 3 | **Exposed files** | [exposedFiles.js](worker/src/engine/exposedFiles.js) | Probes 32 sensitive paths (`.env`, `.git/HEAD`, `/admin`, `/actuator`, …) | **mandatory soft-404 detection** via two random control paths + content fingerprint before flagging |
 | 4 | **Tech fingerprinter** | [techFingerprinter.js](worker/src/engine/techFingerprinter.js) | Detects framework/server/library + version, then matches the **local CVE database** | header/cookie/meta/path/JS-filename patterns → `matchCves(tech, version)` |
 | 5 | **Payload fuzzer** | [payloadFuzzer.js](worker/src/engine/payloadFuzzer.js) | Active injection: classify params → load payloads → baseline → fire → analyze → mutate HIGH_INTEREST hits | see classifier/engine/analyzer/mutation below |
 | 6 | **Auth tester** | [authTester.js](worker/src/engine/authTester.js) | On pages with a password field: brute-force-protection check (20 rapid POSTs; expects 429/403) and 6 default-credential combos | response-based success heuristics |
+| 7 | **JS secret scanner** | [jsSecretScanner.js](worker/src/engine/jsSecretScanner.js) | Fetches each same-host JS file the crawler found and scans the raw source for ~38 secret patterns (cloud keys, DB URIs, private keys, JWTs, passwords) | regex library; line-number + masked-preview extraction, dedupe by pattern+prefix; **stores only `first-8-chars + ****`** |
 
 The fuzzer is itself a small pipeline:
 
