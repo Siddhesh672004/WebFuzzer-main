@@ -71,8 +71,16 @@ export async function sendOtpEmail(email, code) {
   const ttlMinutes = Math.round(config.OTP_TTL_SECONDS / 60);
   const tx = await getTransporter();
 
+  // Gmail SMTP rejects/rewrites a From address that isn't the authenticated
+  // account, which can make sends fail. When using the gmail transport, always
+  // send from the authenticated Gmail address (with a friendly display name).
+  const from =
+    config.MAIL_TRANSPORT === 'gmail' && config.GMAIL_USER
+      ? `SmartFuzz <${config.GMAIL_USER}>`
+      : config.MAIL_FROM;
+
   const info = await tx.sendMail({
-    from: config.MAIL_FROM,
+    from,
     to: email,
     subject: `Your SmartFuzz verification code: ${code}`,
     text: `Your SmartFuzz verification code is ${code}. It expires in ${ttlMinutes} minutes.`,

@@ -33,6 +33,23 @@ export function buildAllQueues() {
   return QUEUE_NAMES.map((name) => buildQueue(name));
 }
 
+/**
+ * Enqueue a job by queue + job name. Thin wrapper over buildQueue().add so the
+ * coordinator and module handlers don't each reach into BullMQ directly.
+ * @param {string} queueName
+ * @param {string} jobName
+ * @param {object} data
+ * @param {object} [opts]  BullMQ job options (e.g. { priority })
+ */
+export function enqueueJob(queueName, jobName, data, opts = {}) {
+  return buildQueue(queueName).add(jobName, data, opts);
+}
+
+/** Enqueue many jobs onto one queue in a single round trip. */
+export function enqueueBulk(queueName, jobs) {
+  return buildQueue(queueName).addBulk(jobs);
+}
+
 /** Close all cached queues (shutdown + tests). */
 export async function closeQueues() {
   await Promise.all([...cache.values()].map((q) => q.close()));

@@ -1,5 +1,3 @@
-version: "3.9"
-
 # SmartFuzz — Docker-only setup.
 # Uses MongoDB Atlas (from .env) + local Redis container.
 #

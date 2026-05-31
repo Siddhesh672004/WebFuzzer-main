@@ -1,15 +1,55 @@
+import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { Shield, ArrowLeft, TrendingUp } from 'lucide-react';
+import { useQuery, useQueries } from '@tanstack/react-query';
+import { Shield, ArrowLeft } from 'lucide-react';
 import { scanApi } from '../api/scans.js';
-import { Button } from '../components/ui.jsx';
+import { SecurityScoreChart } from '../components/SecurityScoreChart.jsx';
+import { ComparisonTable } from '../components/ComparisonTable.jsx';
 
-const STATUS_STYLE = {
-  VULNERABLE: { color: '#F85149', label: '🔴 VULN' },
-  FIXED: { color: '#3FB950', label: '✅ FIXED' },
-  NEW: { color: '#F78166', label: '🆕 NEW' },
-  REGRESSED: { color: '#D29922', label: '⚠️ REGRESSED' },
-};
+// Cross-scan comparison. Fetches every scan for the domain, then each scan's
+// findings, and computes per-signature status across scans client-side (the
+// worker's compareScans runs server-side for reports; here we mirror its rules
+// for the live table). Status per scan N for a signature:
+//   present in N            → VULNERABLE
+//   absent in N, present <N → FIXED
+//   present in N, absent N-1, never before → NEW
+//   present in N, absent N-1, present earlier → REGRESSED
+
+function buildRows(scans, vulnsByScan) {
+  const ordered = [...scans].sort((a, b) => a.scanNumber - b.scanNumber);
+  const bySig = new Map();
+
+  for (const scan of ordered) {
+    for (const v of vulnsByScan[scan.id] || []) {
+      if (!bySig.has(v.signature)) {
+        bySig.set(v.signature, { type: v.type, url: v.url, param: v.param, signature: v.signature, present: new Set() });
+      }
+      bySig.get(v.signature).present.add(scan.scanNumber);
+    }
+  }
+
+  const rows = [];
+  for (const row of bySig.values()) {
+    const statusByScan = {};
+    let seenBefore = false;
+    for (const scan of ordered) {
+      const n = scan.scanNumber;
+      const here = row.present.has(n);
+      if (here) {
+        const prev = ordered[ordered.findIndex((s) => s.scanNumber === n) - 1];
+        const inPrev = prev && row.present.has(prev.scanNumber);
+        if (!seenBefore) statusByScan[n] = 'NEW';
+        else if (inPrev) statusByScan[n] = 'VULNERABLE';
+        else statusByScan[n] = 'REGRESSED';
+        seenBefore = true;
+      } else if (seenBefore) {
+        statusByScan[n] = 'FIXED';
+      }
+    }
+    rows.push({ ...row, statusByScan });
+  }
+  return rows;
+}
 
 export default function Comparison() {
   const { domain } = useParams();
@@ -21,20 +61,55 @@ export default function Comparison() {
     enabled: !!domain,
   });
 
-  const scans = data?.scans || [];
+  const scans = useMemo(() => (data?.scans || []).filter((s) => s.status === 'completed'), [data]);
+
+  // Fetch vulnerabilities for every completed scan in parallel.
+  const vulnQueries = useQueries({
+    queries: scans.map((s) => ({
+      queryKey: ['scan', s.id, 'vulns'],
+      queryFn: () => scanApi.vulnerabilities(s.id),
+      enabled: scans.length > 0,
+    })),
+  });
+
+  const vulnsByScan = useMemo(() => {
+    const map = {};
+    scans.forEach((s, i) => { map[s.id] = vulnQueries[i]?.data?.vulnerabilities || []; });
+    return map;
+  }, [scans, vulnQueries]);
+
+  const rows = useMemo(() => buildRows(scans, vulnsByScan), [scans, vulnsByScan]);
+
+  const history = scans.map((s) => ({
+    scanNumber: s.scanNumber,
+    score: s.stats?.securityScore ?? 100,
+    date: new Date(s.createdAt).toLocaleDateString(),
+  }));
+  const scoresByScan = Object.fromEntries(scans.map((s) => [s.scanNumber, s.stats?.securityScore ?? 100]));
+
+  // Summary counts from the latest scan column.
+  const summary = useMemo(() => {
+    const last = scans[scans.length - 1]?.scanNumber;
+    const c = { fixed: 0, persists: 0, new: 0, regressed: 0 };
+    for (const r of rows) {
+      const s = r.statusByScan[last];
+      if (s === 'FIXED') c.fixed += 1;
+      else if (s === 'VULNERABLE') c.persists += 1;
+      else if (s === 'NEW') c.new += 1;
+      else if (s === 'REGRESSED') c.regressed += 1;
+    }
+    return c;
+  }, [rows, scans]);
 
   if (isLoading) {
     return <div className="flex h-screen items-center justify-center font-mono text-fg-muted"><span className="terminal-cursor">loading</span></div>;
   }
 
-  // Build comparison table from scan stats.
-  const scanNumbers = scans.map((s) => s.scanNumber);
-
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="min-h-screen bg-bg pb-16 sm:pb-0">
       <header className="border-b border-border bg-bg-subtle px-4 py-3">
         <div className="mx-auto flex max-w-6xl items-center gap-3">
-          <button onClick={() => navigate('/dashboard')} className="text-fg-muted hover:text-fg">
+          <button onClick={() => navigate('/dashboard')} className="text-fg-muted hover:text-fg" aria-label="Back">
             <ArrowLeft className="h-5 w-5" />
           </button>
           <Shield className="h-6 w-6 text-accent" />
@@ -42,77 +117,41 @@ export default function Comparison() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-6 space-y-4">
+      <main className="mx-auto max-w-6xl space-y-5 px-4 py-6">
         <div>
           <h1 className="font-mono text-xl font-bold text-fg">{domain}</h1>
-          <p className="font-mono text-sm text-fg-muted">{scans.length} scan{scans.length !== 1 ? 's' : ''} — security progress over time</p>
+          <p className="font-mono text-sm text-fg-muted">{scans.length} scan{scans.length !== 1 ? 's' : ''} analyzed</p>
         </div>
 
         {scans.length === 0 ? (
-          <div className="card p-8 text-center font-mono text-sm text-fg-subtle">No scans found for this domain.</div>
+          <div className="card p-8 text-center font-mono text-sm text-fg-subtle">No completed scans for this domain yet.</div>
+        ) : scans.length === 1 ? (
+          <>
+            <SecurityScoreChart history={history} />
+            <div className="card p-6 text-center font-mono text-sm text-fg-muted">
+              Run another scan after fixing issues to see a fixed/persists comparison.
+            </div>
+          </>
         ) : (
           <>
-            {/* Score trend */}
-            <div className="card p-4">
-              <h2 className="mb-3 flex items-center gap-2 font-mono text-sm font-bold text-fg-muted uppercase tracking-wide">
-                <TrendingUp className="h-4 w-4" /> Security Score Trend
-              </h2>
-              <div className="flex items-end gap-4 overflow-x-auto pb-2">
-                {scans.map((s) => {
-                  const score = s.stats?.securityScore ?? 100;
-                  const color = score >= 80 ? '#3FB950' : score >= 50 ? '#D29922' : '#F85149';
-                  return (
-                    <div key={s.id} className="flex flex-col items-center gap-1 min-w-[60px]">
-                      <span className="font-mono text-lg font-bold" style={{ color }}>{score}</span>
-                      <div className="w-10 rounded-t" style={{ height: `${score}px`, maxHeight: '100px', background: color, opacity: 0.7 }} />
-                      <span className="font-mono text-xs text-fg-muted">#{s.scanNumber}</span>
-                    </div>
-                  );
-                })}
-              </div>
+            <SecurityScoreChart history={history} />
+
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: 'Fixed', value: summary.fixed, cls: 'text-accent' },
+                { label: 'Persists', value: summary.persists, cls: 'text-severity-high' },
+                { label: 'New', value: summary.new, cls: 'text-severity-low' },
+                { label: 'Regressed', value: summary.regressed, cls: 'text-severity-critical' },
+              ].map((c) => (
+                <div key={c.label} className="card p-4 text-center">
+                  <div className={`font-mono text-2xl font-bold ${c.cls}`}>{c.value}</div>
+                  <div className="font-mono text-xs text-fg-muted">{c.label}</div>
+                </div>
+              ))}
             </div>
 
-            {/* Scan summary table */}
-            <div className="card overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Scan</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Date</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Score</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Critical</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">High</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Medium</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted">Total</th>
-                    <th className="px-4 py-3 text-left font-mono text-xs text-fg-muted"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scans.map((s) => (
-                    <tr key={s.id} className="border-b border-border hover:bg-bg-subtle">
-                      <td className="px-4 py-3 font-mono text-sm text-fg">#{s.scanNumber}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-fg-muted">
-                        {new Date(s.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-sm font-bold" style={{
-                        color: (s.stats?.securityScore ?? 100) >= 80 ? '#3FB950' : (s.stats?.securityScore ?? 100) >= 50 ? '#D29922' : '#F85149'
-                      }}>
-                        {s.stats?.securityScore ?? 100}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-sm" style={{ color: '#F85149' }}>{s.stats?.critical || 0}</td>
-                      <td className="px-4 py-3 font-mono text-sm" style={{ color: '#F78166' }}>{s.stats?.high || 0}</td>
-                      <td className="px-4 py-3 font-mono text-sm" style={{ color: '#D29922' }}>{s.stats?.medium || 0}</td>
-                      <td className="px-4 py-3 font-mono text-sm text-fg">{s.stats?.totalVulnerabilities || 0}</td>
-                      <td className="px-4 py-3">
-                        <Button variant="ghost" onClick={() => navigate(`/results/${s.id}`)}>
-                          View
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ComparisonTable scans={scans} rows={rows} scoresByScan={scoresByScan} />
           </>
         )}
       </main>

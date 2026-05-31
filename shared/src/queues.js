@@ -41,6 +41,7 @@ export const JOBS = Object.freeze({
   AUTH_TEST: 'auth-test',
   TECH_FINGERPRINT: 'tech-fingerprint',
   GENERATE_REPORT: 'generate-report',
+  VERIFY_FIX: 'verify-fix',
 });
 
 // BullMQ job priorities (lower number = higher priority). Mutations jump ahead

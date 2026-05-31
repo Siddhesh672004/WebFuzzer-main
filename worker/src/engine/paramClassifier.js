@@ -19,12 +19,12 @@ export const PARAM_CATEGORIES = Object.freeze({
 // Attack types per category (ordered by priority).
 export const CATEGORY_ATTACKS = Object.freeze({
   NUMERIC_ID: ['sqli', 'idor'],
-  SEARCH_FIELD: ['xss', 'sqli'],
+  SEARCH_FIELD: ['xss', 'sqli', 'nosql_injection'],
   FILE_PATH: ['path_traversal', 'ssrf'],
-  URL_FIELD: ['open_redirect', 'ssrf'],
+  URL_FIELD: ['open_redirect', 'ssrf', 'crlf_injection'],
   EMAIL: ['xss'],
   COMMAND: ['cmd_injection', 'ssti'],
-  AUTH_FIELD: ['auth_bypass', 'sqli'],
+  AUTH_FIELD: ['auth_bypass', 'sqli', 'nosql_injection', 'ldap_injection'],
   TEXT_FIELD: ['xss'],
   NUMERIC_BUSINESS: ['parameter_tampering'],
   PRIVILEGE_FIELD: ['mass_assignment'],

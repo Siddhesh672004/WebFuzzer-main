@@ -1,6 +1,6 @@
 import { Queue } from 'bullmq';
 import { getRedis } from './redis.js';
-import { QUEUES } from '@smartfuzz/shared/queues';
+import { QUEUES, JOBS, PRIORITY } from '@smartfuzz/shared/queues';
 
 // Backend-side queue access — the API ENQUEUES scan jobs; the worker consumes
 // them. Reuses the backend Redis client (BullMQ needs maxRetriesPerRequest:null,
@@ -25,6 +25,20 @@ export function getQueue(name) {
 /** Enqueue the orchestration job that kicks off a scan in the worker. */
 export function enqueueScan(scanId, targetUrl, config) {
   return getQueue(QUEUES.ORCHESTRATE).add('start-scan', { scanId: String(scanId), targetUrl, config });
+}
+
+/**
+ * Enqueue a verify-fix job: the worker re-fires the finding's exact payload and
+ * updates its verificationStatus. Runs on the REPORT queue (the verify handler
+ * dispatches by job name). `vuln` is passed inline so the worker needn't re-read
+ * it, but vulnId is the source of truth for the status update.
+ */
+export function enqueueVerifyFix(scanId, vulnId, vuln) {
+  return getQueue(QUEUES.REPORT).add(
+    JOBS.VERIFY_FIX,
+    { scanId: String(scanId), vulnId: String(vulnId), vuln },
+    { priority: PRIORITY.MUTATION },
+  );
 }
 
 export async function closeQueues() {

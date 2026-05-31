@@ -59,6 +59,11 @@ export const VULN_TYPES = Object.freeze({
     owaspRef: 'https://owasp.org/www-community/attacks/Server-Side_Template_Injection',
     subtypes: [],
   },
+  crlf_injection: {
+    key: 'crlf_injection', name: 'CRLF Injection / HTTP Response Splitting', owasp: OWASP.A03,
+    owaspRef: 'https://owasp.org/www-community/vulnerabilities/CRLF_Injection',
+    subtypes: [],
+  },
 
   // ── A01 Broken Access Control ──
   idor: {
@@ -132,6 +137,11 @@ export const VULN_TYPES = Object.freeze({
     owaspRef: 'https://owasp.org/Top10/A05_2021-Security_Misconfiguration/',
     subtypes: [],
   },
+  xxe: {
+    key: 'xxe', name: 'XML External Entity (XXE)', owasp: OWASP.A05,
+    owaspRef: 'https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing',
+    subtypes: [],
+  },
   verbose_error: {
     key: 'verbose_error', name: 'Verbose Error Message', owasp: OWASP.A05,
     owaspRef: 'https://owasp.org/www-community/Improper_Error_Handling',
@@ -179,6 +189,11 @@ export const VULN_TYPES = Object.freeze({
   session_fixation: {
     key: 'session_fixation', name: 'Session Fixation', owasp: OWASP.A07,
     owaspRef: 'https://owasp.org/www-community/attacks/Session_fixation',
+    subtypes: [],
+  },
+  jwt_alg_none: {
+    key: 'jwt_alg_none', name: 'JWT Algorithm Confusion (alg:none)', owasp: OWASP.A07,
+    owaspRef: 'https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/06-Session_Management_Testing/10-Testing_JSON_Web_Tokens',
     subtypes: [],
   },
   missing_logout: {

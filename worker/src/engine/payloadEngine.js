@@ -23,6 +23,9 @@ const ATTACK_TO_VULN_TYPES = {
   nosql_injection: ['nosql_injection'],
   ldap_injection: ['ldap_injection'],
   xpath_injection: ['xpath_injection'],
+  xxe: ['xxe'],
+  jwt_alg_none: ['jwt_alg_none'],
+  crlf_injection: ['crlf_injection'],
 };
 
 /**

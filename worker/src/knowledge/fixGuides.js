@@ -474,6 +474,48 @@ export const FIX_GUIDES = {
     verify: 'Re-run SmartFuzz. Weak TLS should no longer appear.',
     ref: 'https://owasp.org/www-project-transport-layer-security/',
   },
+  xxe: {
+    what: 'An XML parser processed user-supplied XML with external entity resolution enabled.',
+    why: 'Attackers can read local files (/etc/passwd, config), perform SSRF, or cause denial of service (billion laughs).',
+    steps: [
+      'Disable DTDs and external entities in your XML parser — this is the single most effective fix.',
+      'Node.js: avoid libxmljs with noent; use fast-xml-parser or disable entity expansion.',
+      'Java: factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true).',
+      'PHP: libxml_disable_entity_loader(true) on older versions; modern libxml is safe by default.',
+      'Prefer JSON over XML for untrusted input where possible.',
+    ],
+    before: `const doc = libxml.parseXml(req.body, { noent: true }); // entities expanded`,
+    after: `const doc = libxml.parseXml(req.body, { noent: false, nonet: true, dtdload: false });`,
+    verify: 'Re-run SmartFuzz. The XXE finding should no longer appear and file:// payloads should not be reflected.',
+    ref: 'https://owasp.org/www-community/vulnerabilities/XML_External_Entity_(XXE)_Processing',
+  },
+  jwt_alg_none: {
+    what: 'The server accepted a JWT whose header declared "alg":"none" (or an algorithm it should not trust), skipping signature verification.',
+    why: 'Attackers can forge tokens for any user — including admins — and gain full authenticated access without knowing any secret.',
+    steps: [
+      'Explicitly pin the allowed algorithm(s) when verifying — never trust the alg in the token header.',
+      'Reject "none" and reject algorithm switches (e.g. RS256 → HS256 confusion).',
+      'jsonwebtoken: jwt.verify(token, key, { algorithms: ["RS256"] }).',
+      'Rotate signing keys if you suspect tokens were forged.',
+    ],
+    before: `jwt.verify(token, secret); // accepts whatever alg the token claims`,
+    after: `jwt.verify(token, secret, { algorithms: ['HS256'] }); // alg:none rejected`,
+    verify: 'Re-run SmartFuzz. A token with alg:none should now return 401, not authenticated access.',
+    ref: 'https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/06-Session_Management_Testing/10-Testing_JSON_Web_Tokens',
+  },
+  crlf_injection: {
+    what: 'User input containing carriage-return/line-feed (\\r\\n) characters was reflected into HTTP response headers.',
+    why: 'Attackers can inject arbitrary headers, split the response, poison caches, or set malicious cookies (HTTP response splitting).',
+    steps: [
+      'Strip or reject CR (%0d) and LF (%0a) characters from any value placed in a response header.',
+      'Use framework APIs that encode header values rather than building headers by string concatenation.',
+      'Validate redirect/location values against an allowlist before setting them.',
+    ],
+    before: `res.setHeader('Location', req.query.next); // next = "/\\r\\nSet-Cookie: admin=1"`,
+    after: `const next = String(req.query.next).replace(/[\\r\\n]/g, '');\nres.setHeader('Location', next);`,
+    verify: 'Re-run SmartFuzz. Injected CRLF payloads should no longer appear as separate response headers.',
+    ref: 'https://owasp.org/www-community/vulnerabilities/CRLF_Injection',
+  },
 };
 
 /** Get the fix guide for a vuln type, or a generic fallback. */

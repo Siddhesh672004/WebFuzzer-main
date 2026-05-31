@@ -9,6 +9,7 @@ import healthRoutes from './routes/health.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import scanRoutes from './routes/scan.routes.js';
 import reportRoutes from './routes/report.routes.js';
+import vulnerabilityRoutes from './routes/vulnerability.routes.js';
 import { notFoundHandler, errorHandler } from './middleware/error.middleware.js';
 
 // App factory. Builds and returns the Express app WITHOUT calling listen(), so
@@ -49,6 +50,7 @@ export function createApp() {
   app.use('/api', authRoutes);
   app.use('/api', scanRoutes);
   app.use('/api', reportRoutes);
+  app.use('/api', vulnerabilityRoutes);
 
   // 404 + central error handler (must be last).
   app.use(notFoundHandler);

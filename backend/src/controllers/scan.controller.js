@@ -7,6 +7,7 @@ import { enqueueScan } from '../lib/queue.js';
 import { getSubscriber } from '../lib/redis.js';
 import { config } from '../config.js';
 import { childLogger } from '../logger.js';
+import { getFixGuide } from '../../../worker/src/knowledge/fixGuides.js';
 
 const log = childLogger('scans');
 
@@ -98,8 +99,34 @@ export const getScan = asyncHandler(async (req, res) => {
 /** GET /api/scans/:id/vulnerabilities — findings for a scan. */
 export const getScanVulnerabilities = asyncHandler(async (req, res) => {
   const scan = await ownedScan(req);
-  const vulns = await Vulnerability.find({ scanId: scan._id }).sort({ cvssScore: -1 });
+  const filter = { scanId: scan._id };
+
+  // Optional filters: severity, type, and fuzzy search on url+param.
+  if (req.query.severity && req.query.severity !== 'all') {
+    filter.severity = String(req.query.severity);
+  }
+  if (req.query.type && req.query.type !== 'all') {
+    filter.type = String(req.query.type);
+  }
+  if (req.query.search) {
+    const rx = new RegExp(escapeRegex(String(req.query.search)), 'i');
+    filter.$or = [{ url: rx }, { param: rx }];
+  }
+
+  const vulns = await Vulnerability.find(filter).sort({ cvssScore: -1 });
   res.json({ vulnerabilities: vulns.map((v) => v.toJSON()) });
+});
+
+/** GET /api/scans/:id/vulnerabilities/:vulnId — one finding + its fix guide. */
+export const getScanVulnerability = asyncHandler(async (req, res) => {
+  const scan = await ownedScan(req);
+  const { vulnId } = req.params;
+  if (!mongoose.isValidObjectId(vulnId)) throw badRequest('Invalid vulnerability id');
+  const vuln = await Vulnerability.findOne({ _id: vulnId, scanId: scan._id });
+  if (!vuln) throw notFound('Vulnerability not found');
+  const out = vuln.toJSON();
+  out.fixGuide = getFixGuide(vuln.type);
+  res.json({ vulnerability: out });
 });
 
 /** GET /api/scans/target/:domain — all scans for a domain (comparison). */
@@ -178,4 +205,8 @@ async function ownedScan(req) {
   if (!scan) throw notFound('Scan not found');
   if (String(scan.userId) !== String(req.user.id)) throw forbidden('Not your scan');
   return scan;
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

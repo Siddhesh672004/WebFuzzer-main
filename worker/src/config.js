@@ -29,6 +29,12 @@ const schema = z.object({
 
   WORKER_FUZZ_CONCURRENCY: z.coerce.number().int().positive().default(5),
 
+  // Fan-out mode: when true, a scan is split into one BullMQ job per module
+  // (crawl → passive/exposed/tech/fuzz/auth) coordinated by a Redis counter,
+  // instead of the single-process ScanRunner. The monolithic path remains the
+  // default — it shares one rate limiter trivially and is the most battle-tested.
+  WORKER_FANOUT: boolish(false),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 

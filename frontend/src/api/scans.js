@@ -13,17 +13,43 @@ export const scanApi = {
 
   delete: (id) => api.delete(`/scans/${id}`).then((r) => r.data),
 
-  vulnerabilities: (id) =>
-    api.get(`/scans/${id}/vulnerabilities`).then((r) => r.data),
+  vulnerabilities: (id, params = {}) =>
+    api.get(`/scans/${id}/vulnerabilities`, { params }).then((r) => r.data),
+
+  vulnerability: (id, vulnId) =>
+    api.get(`/scans/${id}/vulnerabilities/${vulnId}`).then((r) => r.data),
 
   byDomain: (domain) =>
     api.get(`/scans/target/${encodeURIComponent(domain)}`).then((r) => r.data),
 };
 
+// Remediation tracker (Phase 6).
+export const vulnApi = {
+  markFixed: (vulnId, fixed = true) =>
+    api.post(`/vulnerabilities/${vulnId}/mark-fixed`, { fixed }).then((r) => r.data),
+  verify: (vulnId) =>
+    api.post(`/vulnerabilities/${vulnId}/verify`).then((r) => r.data),
+};
+
+// Report downloads. Each returns a Blob for client-side save.
 export const reportApi = {
   get: (scanId) => api.get(`/reports/${scanId}`).then((r) => r.data),
+  download: (scanId, format) =>
+    api.get(`/reports/${scanId}/${format}`, { responseType: 'blob' }).then((r) => r.data),
   downloadHtml: (scanId) =>
     api.get(`/reports/${scanId}/html`, { responseType: 'blob' }).then((r) => r.data),
   downloadCsv: (scanId) =>
     api.get(`/reports/${scanId}/csv`, { responseType: 'blob' }).then((r) => r.data),
 };
+
+/** Trigger a browser download of a Blob with a given filename. */
+export function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

@@ -5,6 +5,7 @@ import {
   listScans,
   getScan,
   getScanVulnerabilities,
+  getScanVulnerability,
   getScansByDomain,
   deleteScan,
   streamProgress,
@@ -19,6 +20,7 @@ router.post('/scans', requireAuth, createScan);
 router.get('/scans', requireAuth, listScans);
 router.get('/scans/target/:domain', requireAuth, getScansByDomain);
 router.get('/scans/:id/progress', requireAuth, streamProgress);
+router.get('/scans/:id/vulnerabilities/:vulnId', requireAuth, getScanVulnerability);
 router.get('/scans/:id/vulnerabilities', requireAuth, getScanVulnerabilities);
 router.get('/scans/:id', requireAuth, getScan);
 router.delete('/scans/:id', requireAuth, deleteScan);

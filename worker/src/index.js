@@ -7,23 +7,36 @@ import { closeQueues } from './queue/queues.js';
 import { QUEUES } from '@smartfuzz/shared/queues';
 import { ScanRunner } from './scan/scanRunner.js';
 import { publishProgress, closePublisher } from './scan/publisher.js';
+import {
+  makeCrawlHandler, makePassiveHandler, makeExposedHandler,
+  makeTechHandler, makeAuthHandler, makeFuzzHandler,
+} from './scan/modules.js';
+import { buildVerifyHandler } from './scan/verifyHandler.js';
 
 // Worker process bootstrap. Connects to Mongo + Redis and registers a worker
-// per scanning-module queue. Handlers are placeholders for now — Phase 2+
-// swaps each one for a thin wrapper that calls the corresponding engine module.
-// Keeping the bootstrap stable means later phases only touch src/workers/.
+// per scanning-module queue.
+//
+// Two execution modes (WORKER_FANOUT):
+//   • false (default) — the monolithic ScanRunner consumes ORCHESTRATE jobs and
+//     runs every module in one process with one shared rate limiter. Proven,
+//     simplest, the production default.
+//   • true — true BullMQ fan-out: ORCHESTRATE seeds a CRAWL job, crawl fans out
+//     one job per Phase-2 module (+ one fuzz job per endpoint), and a Redis
+//     completion counter (coordinator.js) finalizes the scan when all finish.
+//     Per-scan context (scanContext.js) preserves the single-rate-limiter
+//     invariant across the fan-out jobs.
 
 mongoose.set('strictQuery', true);
 
-// Placeholder handler used until a module is implemented. Logs and no-ops so
-// the pipeline wiring is verifiable end-to-end before the engine exists.
+// Placeholder handler used when fan-out is disabled (these queues are dormant —
+// ORCHESTRATE does all the work). Logs and no-ops.
 function placeholder(moduleName) {
   return async (job) => {
     logger.warn(
       { module: moduleName, jobId: job.id, scanId: job.data?.scanId },
-      `[${moduleName}] not yet implemented — no-op`,
+      `[${moduleName}] dormant (WORKER_FANOUT=false) — no-op`,
     );
-    return { module: moduleName, status: 'not_implemented' };
+    return { module: moduleName, status: 'dormant' };
   };
 }
 
@@ -31,33 +44,57 @@ export async function start() {
   await mongoose.connect(config.MONGO_URI, { serverSelectionTimeoutMS: 5000 });
   logger.info('worker: MongoDB connected');
 
-  getRedis(); // open the shared Redis connection
+  const redis = getRedis(); // open the shared Redis connection
 
-  // One worker per module queue. fuzz gets the configured concurrency; the
-  // rest default to 1 (they're coarse-grained, one job per scan).
-  registerWorker(QUEUES.CRAWL, placeholder('crawler'));
-  registerWorker(QUEUES.PASSIVE, placeholder('passiveAnalyzer'));
-  registerWorker(QUEUES.EXPOSED, placeholder('exposedFiles'));
-  registerWorker(QUEUES.FUZZ, placeholder('payloadFuzzer'), {
-    concurrency: config.WORKER_FUZZ_CONCURRENCY,
-  });
-  registerWorker(QUEUES.AUTH, placeholder('authTester'));
-  registerWorker(QUEUES.TECH, placeholder('techFingerprinter'));
-
-  // Orchestrator: consumes start-scan jobs and runs the full pipeline. This is
-  // the real handler — the per-module queues above remain for Phase 3 fan-out.
-  registerWorker(QUEUES.ORCHESTRATE, async (job) => {
-    const { scanId, targetUrl, config: scanCfg } = job.data;
-    const runner = new ScanRunner({
-      scanId,
-      targetUrl,
-      publish: publishProgress,
-      config: scanCfg || {},
+  if (config.WORKER_FANOUT) {
+    // ── Real fan-out handlers ──
+    const deps = { publish: publishProgress, redis };
+    registerWorker(QUEUES.CRAWL, makeCrawlHandler(deps));
+    registerWorker(QUEUES.PASSIVE, makePassiveHandler(deps));
+    registerWorker(QUEUES.EXPOSED, makeExposedHandler(deps), { concurrency: 3 });
+    registerWorker(QUEUES.TECH, makeTechHandler(deps));
+    registerWorker(QUEUES.AUTH, makeAuthHandler(deps));
+    registerWorker(QUEUES.FUZZ, makeFuzzHandler(deps), {
+      concurrency: config.WORKER_FUZZ_CONCURRENCY,
     });
-    return runner.run();
-  });
 
-  registerWorker(QUEUES.REPORT, placeholder('reportGenerator'));
+    // ORCHESTRATE seeds the fan-out by enqueuing the crawl job.
+    registerWorker(QUEUES.ORCHESTRATE, async (job) => {
+      const { scanId, targetUrl, config: scanCfg } = job.data;
+      const { enqueueJob } = await import('./queue/queues.js');
+      const { JOBS } = await import('@smartfuzz/shared/queues');
+      await enqueueJob(QUEUES.CRAWL, JOBS.CRAWL_TARGET, { scanId, targetUrl, config: scanCfg || {} });
+      return { scanId, mode: 'fanout', dispatched: 'crawl' };
+    });
+
+    logger.info('worker: fan-out mode — module workers registered');
+  } else {
+    // ── Monolithic mode (default): ORCHESTRATE runs the whole pipeline ──
+    registerWorker(QUEUES.CRAWL, placeholder('crawler'));
+    registerWorker(QUEUES.PASSIVE, placeholder('passiveAnalyzer'));
+    registerWorker(QUEUES.EXPOSED, placeholder('exposedFiles'));
+    registerWorker(QUEUES.FUZZ, placeholder('payloadFuzzer'), {
+      concurrency: config.WORKER_FUZZ_CONCURRENCY,
+    });
+    registerWorker(QUEUES.AUTH, placeholder('authTester'));
+    registerWorker(QUEUES.TECH, placeholder('techFingerprinter'));
+
+    registerWorker(QUEUES.ORCHESTRATE, async (job) => {
+      const { scanId, targetUrl, config: scanCfg } = job.data;
+      const runner = new ScanRunner({
+        scanId,
+        targetUrl,
+        publish: publishProgress,
+        config: scanCfg || {},
+      });
+      return runner.run();
+    });
+
+    logger.info('worker: monolithic mode — orchestrator registered');
+  }
+
+  // Verify-fix worker (Phase 6): re-test a single finding's exact payload.
+  registerWorker(QUEUES.REPORT, buildVerifyHandler({ publish: publishProgress }));
 
   logger.info('worker: all module workers registered');
 }

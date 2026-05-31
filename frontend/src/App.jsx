@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import { BottomNav } from './components/BottomNav.jsx';
 
 const Verify = lazy(() => import('./pages/Verify.jsx'));
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
@@ -9,6 +10,7 @@ const ScanMonitor = lazy(() => import('./pages/ScanMonitor.jsx'));
 const ScanResults = lazy(() => import('./pages/ScanResults.jsx'));
 const Comparison = lazy(() => import('./pages/Comparison.jsx'));
 const Reports = lazy(() => import('./pages/Reports.jsx'));
+const FixGuide = lazy(() => import('./pages/FixGuide.jsx'));
 
 function PageFallback() {
   return (
@@ -19,7 +21,12 @@ function PageFallback() {
 }
 
 function Protected({ children }) {
-  return <ProtectedRoute>{children}</ProtectedRoute>;
+  return (
+    <ProtectedRoute>
+      {children}
+      <BottomNav />
+    </ProtectedRoute>
+  );
 }
 
 export default function App() {
@@ -31,6 +38,7 @@ export default function App() {
         <Route path="/scan/new" element={<Protected><NewScan /></Protected>} />
         <Route path="/scan/:id" element={<Protected><ScanMonitor /></Protected>} />
         <Route path="/results/:id" element={<Protected><ScanResults /></Protected>} />
+        <Route path="/fix/:scanId/:vulnId" element={<Protected><FixGuide /></Protected>} />
         <Route path="/compare/:domain" element={<Protected><Comparison /></Protected>} />
         <Route path="/reports" element={<Protected><Reports /></Protected>} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

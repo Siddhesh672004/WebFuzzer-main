@@ -14,6 +14,7 @@ export const SSE_EVENTS = Object.freeze({
   MODULE: 'module', // { module, status }
   STATUS: 'status', // { status: running|completed|failed }
   DONE: 'done', // terminal — stream can close
+  VERIFY: 'verify_result', // { vulnId, status: verified_fixed|verified_persists }
 });
 
 /** Build a normalized progress event payload. */

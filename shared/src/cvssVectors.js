@@ -51,6 +51,12 @@ export const CVSS_VECTORS = Object.freeze({
   cors_misconfig: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:N/A:N', expectedScore: 8.1 },
   // NoSQL injection: auth bypass / data dump → 8.1 (scope changed, low impacts)
   nosql_injection: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:L/I:L/A:N', expectedScore: 8.7 },
+  // XXE: file read + SSRF, high conf+integrity, scope unchanged → 9.1
+  xxe: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N', expectedScore: 9.1 },
+  // JWT alg:none: auth forgery → full account/data access → 9.1
+  jwt_alg_none: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N', expectedScore: 9.1 },
+  // CRLF injection / response splitting: header injection, scope changed → 6.1
+  crlf_injection: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N', expectedScore: 6.1 },
   // Parameter tampering: business-logic integrity → 7.5
   parameter_tampering: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N', expectedScore: 7.5 },
   // Exposed admin panel → 8.6 (per PRD; high confidentiality + low integrity)

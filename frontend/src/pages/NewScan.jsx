@@ -1,33 +1,56 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Target, AlertTriangle } from 'lucide-react';
+import { Shield, Target, AlertTriangle, ChevronDown } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { scanApi } from '../api/scans.js';
 import { Button, Input, Alert } from '../components/ui.jsx';
+import { ScanPresetSelector, SCAN_PRESETS } from '../components/ScanPresetSelector.jsx';
 
 export default function NewScan() {
   const navigate = useNavigate();
   const [url, setUrl] = useState('');
   const [consented, setConsented] = useState(false);
   const [error, setError] = useState('');
+  const [preset, setPreset] = useState('standard');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [rateLimit, setRateLimit] = useState(null);
+  const [urlWarning, setUrlWarning] = useState('');
+
+  const presetCfg = SCAN_PRESETS[preset]?.config || {};
+  const effectiveConfig = { ...presetCfg, ...(rateLimit ? { rateLimit } : {}) };
 
   const start = useMutation({
-    mutationFn: () => scanApi.create(url.trim(), true),
+    mutationFn: () => scanApi.create(url.trim(), true, effectiveConfig),
     onSuccess: (data) => navigate(`/scan/${data.scan.id}`),
     onError: (err) => setError(err.message || 'Failed to start scan'),
   });
+
+  function validateUrl(value) {
+    try {
+      const u = new URL(value);
+      // Warn (don't block) on private hosts — the backend gates these on SCAN_ALLOW_PRIVATE.
+      if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(u.hostname)) {
+        setUrlWarning('Private/local target — requires SCAN_ALLOW_PRIVATE=true on the worker.');
+      } else {
+        setUrlWarning('');
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   function handleSubmit(e) {
     e.preventDefault();
     setError('');
     if (!url.trim()) return setError('Enter a target URL.');
-    try { new URL(url.trim()); } catch { return setError('Enter a valid http(s) URL.'); }
+    if (!validateUrl(url.trim())) return setError('Enter a valid http(s) URL.');
     if (!consented) return setError('You must confirm authorization before scanning.');
-    start.mutate();
+    return start.mutate();
   }
 
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="min-h-screen bg-bg pb-16 sm:pb-0">
       <header className="border-b border-border bg-bg-subtle px-4 py-3">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <Shield className="h-6 w-6 text-accent" />
@@ -37,7 +60,7 @@ export default function NewScan() {
 
       <main className="mx-auto max-w-3xl px-4 py-8">
         <h1 className="mb-2 font-mono text-2xl font-bold text-fg">New Scan</h1>
-        <p className="mb-6 font-mono text-sm text-fg-muted"><span className="text-accent">$</span> enter a target URL to begin</p>
+        <p className="mb-6 font-mono text-sm text-fg-muted"><span className="text-accent">$</span> configure and launch a scan</p>
 
         {error && <div className="mb-4"><Alert variant="error">{error}</Alert></div>}
 
@@ -47,11 +70,49 @@ export default function NewScan() {
               id="target-url"
               label="Target URL"
               type="url"
+              inputMode="url"
               placeholder="https://example.com"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => { setUrl(e.target.value); validateUrl(e.target.value); }}
               autoFocus
             />
+            {urlWarning && <p className="mt-2 font-mono text-xs text-severity-medium">{urlWarning}</p>}
+          </div>
+
+          {/* Preset selector */}
+          <div>
+            <h2 className="mb-2 font-mono text-xs font-bold uppercase tracking-wide text-fg-muted">Scan Depth</h2>
+            <ScanPresetSelector value={preset} onChange={(id) => setPreset(id)} />
+          </div>
+
+          {/* Advanced options */}
+          <div className="card p-4">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex w-full items-center justify-between font-mono text-sm text-fg"
+            >
+              <span>Advanced options</span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+            </button>
+            {showAdvanced && (
+              <div className="mt-4 space-y-3">
+                <label className="block font-mono text-xs text-fg-muted">
+                  Rate limit (requests/sec): <span className="text-accent">{rateLimit ?? presetCfg.rateLimit}</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="50"
+                    value={rateLimit ?? presetCfg.rateLimit ?? 10}
+                    onChange={(e) => setRateLimit(Number(e.target.value))}
+                    className="mt-1 w-full accent-accent"
+                  />
+                </label>
+                <div className="font-mono text-xs text-fg-subtle">
+                  Max depth {presetCfg.maxDepth} · up to {presetCfg.maxEndpoints} endpoints
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="card border-severity-medium/40 bg-severity-medium/5 p-6">

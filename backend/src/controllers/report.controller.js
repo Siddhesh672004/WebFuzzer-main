@@ -63,6 +63,15 @@ export const getReport = asyncHandler(async (req, res) => {
   res.json({ report: report.toJSON() });
 });
 
+/** GET /api/reports/:scanId/json — downloadable JSON report. */
+export const getReportJson = asyncHandler(async (req, res) => {
+  const { scan, report } = await getOrBuildReport(req.params.scanId, req.user.id);
+  const filename = `SmartFuzz_Report_${scan.targetDomain}_Scan${scan.scanNumber}.json`;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(JSON.stringify(report.jsonContent, null, 2));
+});
+
 export const getReportHtml = asyncHandler(async (req, res) => {
   const { scan, report } = await getOrBuildReport(req.params.scanId, req.user.id);
   const filename = `SmartFuzz_Report_${scan.targetDomain}_Scan${scan.scanNumber}_${new Date().toISOString().slice(0, 10)}.html`;

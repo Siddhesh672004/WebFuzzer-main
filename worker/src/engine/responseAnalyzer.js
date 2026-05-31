@@ -52,6 +52,42 @@ const SSTI_PATTERNS = [
 // ── Open redirect confirmation ──
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+// ── NoSQL injection confirmation (Mongo/Couch operator-injection errors) ──
+const NOSQL_ERROR_PATTERNS = [
+  /MongoError/i,
+  /CastError/i,
+  /\bBSONError\b/i,
+  /\bBSONTypeError\b/i,
+  /E11000 duplicate key/i,
+  /is not a function/i, // $where JS evaluation TypeError
+  /MongoServerError/i,
+  /failed to parse.*\$/i,
+  /unknown operator: \$/i,
+];
+
+// ── XXE confirmation (file read echoed back, or entity reflected) ──
+// Reuses LFI_PATTERNS for /etc/passwd-style proof; adds Windows + hostname markers.
+const XXE_PATTERNS = [
+  /root:x:0:0/,
+  /daemon:[^:]*:[^:]*:[^:]*:/,
+  /\[fonts\]/i, // win.ini
+  /\[extensions\]/i, // win.ini
+  /for 16-bit app support/i, // win.ini
+];
+
+// ── LDAP injection confirmation ──
+const LDAP_ERROR_PATTERNS = [
+  /LDAPException/i,
+  /javax\.naming/i,
+  /LDAP server/i,
+  /com\.sun\.jndi\.ldap/i,
+  /Invalid DN syntax/i,
+  /supplied argument is not a valid ldap/i,
+  /Bad search filter/i,
+  /Protocol error occurred/i,
+  /Size limit exceeded/i,
+];
+
 /**
  * Analyze a single fuzz response.
  * @param {object} baseline  { status, bodyLength, responseTimeMs }
@@ -166,6 +202,84 @@ export function analyzeResponse(baseline, response, payloadMeta) {
     }
   }
 
+  // ── NoSQL injection ──
+  // Confirm on operator-injection DB errors, or a $gt/$ne payload that flips a
+  // baseline 401/403/empty into a 200 with a meaningfully larger body.
+  if (attackType === 'nosql_injection') {
+    for (const re of NOSQL_ERROR_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'nosql_injection', url, param, payload,
+            evidence: `NoSQL error in response: ${body.match(re)?.[0]?.slice(0, 100)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
+    // Auth/data-bypass signal: operator payload turns a rejected baseline into success.
+    const operatorPayload = /\$(gt|ne|regex|where|gte|lte|in)/i.test(payload);
+    const baselineRejected = [401, 403, 404, 400].includes(baseline.status);
+    if (operatorPayload && baselineRejected && status === 200 && body.length > (baseline.bodyLength || 0)) {
+      return {
+        finding: makeFinding({
+          type: 'nosql_injection', url, param, payload,
+          evidence: `Operator-injection payload bypassed rejection: baseline HTTP ${baseline.status} → 200 with larger body`,
+          response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+        }),
+      };
+    }
+  }
+
+  // ── XXE (XML External Entity) ──
+  // Only meaningful for XML-accepting endpoints; confirm on file content echoed
+  // back via the injected entity.
+  if (attackType === 'xxe') {
+    for (const re of XXE_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'xxe', url, param, payload,
+            evidence: `External entity resolved — file content in response: ${body.match(re)?.[0]?.slice(0, 80)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
+  }
+
+  // ── LDAP injection ──
+  if (attackType === 'ldap_injection') {
+    for (const re of LDAP_ERROR_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'ldap_injection', url, param, payload,
+            evidence: `LDAP error in response: ${body.match(re)?.[0]?.slice(0, 100)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
+  }
+
+  // ── CRLF injection / HTTP response splitting ──
+  // The payload carries an injected header marker; if the server reflects user
+  // input into response headers without stripping CR/LF, that header appears in
+  // the parsed response headers.
+  if (attackType === 'crlf_injection' && /(%0d%0a|%0D%0A|\r\n|%E5%98%8A%E5%98%8D)/.test(payload)) {
+    const injected = findInjectedHeader(response.headers, payload);
+    if (injected) {
+      return {
+        finding: makeFinding({
+          type: 'crlf_injection', url, param, payload,
+          evidence: `Injected header reflected in response: ${injected}`,
+          response: { statusCode: status, bodyExcerpt: body.slice(0, 500), responseTimeMs: timeMs },
+        }),
+      };
+    }
+  }
+
   // ── Anomaly detection → HIGH_INTEREST (triggers mutation engine) ──
   if (status === 500) {
     return { interest: 'HIGH', reason: 'HTTP 500 response' };
@@ -206,4 +320,32 @@ function isSameOrigin(base, target) {
   } catch {
     return false;
   }
+}
+
+// CRLF: detect whether the payload's injected header surfaced in the parsed
+// response headers. Header names are matched case-insensitively. Returns the
+// matched "name: value" string for evidence, or null.
+function findInjectedHeader(headers, payload) {
+  if (!headers) return null;
+  // Pull candidate header names out of the payload (e.g. "X-Injected-Header",
+  // "Set-Cookie") that follow a CRLF sequence.
+  const decoded = payload
+    .replace(/%0d%0a|%0D%0A|%E5%98%8A%E5%98%8D/g, '\r\n')
+    .replace(/\\r\\n/g, '\r\n');
+  const matches = [...decoded.matchAll(/[\r\n]+\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*([^\r\n]*)/g)];
+  for (const m of matches) {
+    const name = m[1].toLowerCase();
+    const wantVal = (m[2] || '').trim().toLowerCase();
+    for (const [hName, hVal] of Object.entries(headers)) {
+      if (hName.toLowerCase() === name) {
+        const got = String(hVal).toLowerCase();
+        // Confirm the value too when the payload specified one (avoids matching
+        // a header the app legitimately sets).
+        if (!wantVal || got.includes(wantVal) || wantVal.includes('smartfuzz')) {
+          return `${hName}: ${hVal}`;
+        }
+      }
+    }
+  }
+  return null;
 }
