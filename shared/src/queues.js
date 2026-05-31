@@ -15,6 +15,10 @@ export const QUEUES = Object.freeze({
   // Orchestration: fan-out on scan start, aggregate/report on completion.
   ORCHESTRATE: 'orchestrate-queue',
   REPORT: 'report-queue',
+  // Reserved for the JS Secret Scanner. Detection currently runs inside
+  // ScanRunner (Phase 2), so this queue has no registered worker yet — it exists
+  // for forward-compatible fan-out, mirroring the dormant module queues above.
+  JS_SECRET: 'js-secret-queue',
 });
 
 // Frozen list for iteration (e.g. registering all workers).
@@ -42,6 +46,7 @@ export const JOBS = Object.freeze({
   TECH_FINGERPRINT: 'tech-fingerprint',
   GENERATE_REPORT: 'generate-report',
   VERIFY_FIX: 'verify-fix',
+  SCAN_JS_SECRETS: 'scan-js-secrets',
 });
 
 // BullMQ job priorities (lower number = higher priority). Mutations jump ahead

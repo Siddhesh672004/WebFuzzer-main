@@ -26,12 +26,13 @@ export function normalizeUrl(raw, base) {
 
 /**
  * Extract endpoints + links from an HTML document.
- * @returns {{ endpoints: Endpoint[], links: string[] }}
+ * @returns {{ endpoints: Endpoint[], links: string[], jsUrls: string[] }}
  */
 export function extractFromHtml(html, pageUrl) {
   const $ = cheerio.load(html);
   const endpoints = [];
   const links = new Set();
+  const jsUrls = new Set();
 
   // 1. Query params already present on the page URL itself.
   const pageParams = paramsFromUrl(pageUrl);
@@ -94,7 +95,20 @@ export function extractFromHtml(html, pageUrl) {
     }
   });
 
-  return { endpoints, links: [...links] };
+  // 4. External JavaScript files (<script src>) — fed to the JS Secret Scanner.
+  $('script[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (!src) return;
+    let abs;
+    try {
+      abs = new URL(src, pageUrl).toString();
+    } catch {
+      return;
+    }
+    jsUrls.add(abs);
+  });
+
+  return { endpoints, links: [...links], jsUrls: [...jsUrls] };
 }
 
 function paramsFromUrl(url) {
@@ -132,7 +146,7 @@ function endpointKey(e) {
  * @param {string} targetUrl
  * @param {HttpClient} http
  * @param {object} [opts] { maxDepth, maxEndpoints, onProgress }
- * @returns {Promise<{ endpoints, pagesVisited, errors }>}
+ * @returns {Promise<{ endpoints, jsUrls, pagesVisited, errors }>}
  */
 export async function crawl(targetUrl, http, opts = {}) {
   const maxDepth = opts.maxDepth ?? 3;
@@ -141,6 +155,7 @@ export async function crawl(targetUrl, http, opts = {}) {
 
   const visited = new Set();
   const endpointsByKey = new Map();
+  const jsUrlSet = new Set();
   const errors = [];
   let pagesVisited = 0;
 
@@ -163,7 +178,7 @@ export async function crawl(targetUrl, http, opts = {}) {
     const contentType = String(res.headers['content-type'] || '');
     if (!contentType.includes('html')) continue; // only parse HTML
 
-    const { endpoints, links } = extractFromHtml(res.body, res.finalUrl || url);
+    const { endpoints, links, jsUrls } = extractFromHtml(res.body, res.finalUrl || url);
     for (const e of endpoints) {
       const key = endpointKey(e);
       if (!endpointsByKey.has(key)) {
@@ -171,6 +186,13 @@ export async function crawl(targetUrl, http, opts = {}) {
         onProgress({ endpointsDiscovered: endpointsByKey.size });
         if (endpointsByKey.size >= maxEndpoints) break;
       }
+    }
+
+    // Collect same-host JS files for the secret scanner. Same-host keeps the
+    // SSRF surface tight and focuses on the target's own bundles (where its
+    // secrets actually leak), not third-party CDN libraries.
+    for (const jsUrl of jsUrls || []) {
+      if (isSameHost(targetUrl, jsUrl)) jsUrlSet.add(jsUrl);
     }
 
     if (depth < maxDepth) {
@@ -183,5 +205,5 @@ export async function crawl(targetUrl, http, opts = {}) {
     }
   }
 
-  return { endpoints: [...endpointsByKey.values()], pagesVisited, errors };
+  return { endpoints: [...endpointsByKey.values()], jsUrls: [...jsUrlSet], pagesVisited, errors };
 }

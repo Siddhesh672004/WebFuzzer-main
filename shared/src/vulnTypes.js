@@ -103,6 +103,11 @@ export const VULN_TYPES = Object.freeze({
     owaspRef: 'https://owasp.org/www-project-secure-headers/#http-strict-transport-security',
     subtypes: [],
   },
+  exposed_secret: {
+    key: 'exposed_secret', name: 'Exposed Secret / Credential', owasp: OWASP.A02,
+    owaspRef: 'https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_credentials',
+    subtypes: ['critical', 'high', 'medium', 'low'],
+  },
 
   // ── A04 Insecure Design ──
   mass_assignment: {

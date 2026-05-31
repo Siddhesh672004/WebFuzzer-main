@@ -9,10 +9,11 @@ import {
 } from '../src/queues.js';
 
 describe('queue constants', () => {
-  it('defines the six module queues plus orchestration + report', () => {
-    expect(QUEUE_NAMES).toHaveLength(8);
+  it('defines the six module queues plus orchestration, report, and js-secret', () => {
+    expect(QUEUE_NAMES).toHaveLength(9);
     expect(QUEUE_NAMES).toContain('crawl-queue');
     expect(QUEUE_NAMES).toContain('report-queue');
+    expect(QUEUE_NAMES).toContain('js-secret-queue');
   });
 
   it('MODULE_QUEUES is exactly the six scanning modules', () => {

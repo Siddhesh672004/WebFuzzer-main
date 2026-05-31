@@ -97,6 +97,10 @@ export const CVSS_VECTORS = Object.freeze({
   tech_fingerprint: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N', expectedScore: 0.0 },
   // Known CVE → score inherited from CVE data at runtime (placeholder vector)
   known_cve: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L', expectedScore: 6.3 },
+  // Exposed secret/credential in client JS → high confidentiality (default band).
+  // The detector sets a per-secret subtype (critical/high/medium/low) that
+  // overrides this via CVSS_SUBTYPE_VECTORS below.
+  exposed_secret: { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N', expectedScore: 7.5 },
 });
 
 // Subtype-specific overrides. Falls back to the type-level vector if absent.
@@ -108,6 +112,12 @@ export const CVSS_SUBTYPE_VECTORS = Object.freeze({
   'sqli:time_based': { vector: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H', expectedScore: 9.9 },
   'path_traversal:directory_traversal': { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N', expectedScore: 7.5 },
   'ssrf:blind': { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:L/I:L/A:N', expectedScore: 8.7 },
+  // Exposed-secret severity is driven by which secret pattern matched. Each band
+  // is verified to round into its qualitative range by computeCvss().
+  'exposed_secret:critical': { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N', expectedScore: 10.0 },
+  'exposed_secret:high': { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N', expectedScore: 7.5 },
+  'exposed_secret:medium': { vector: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N', expectedScore: 5.3 },
+  'exposed_secret:low': { vector: 'CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:L/I:N/A:N', expectedScore: 3.1 },
 });
 
 /**

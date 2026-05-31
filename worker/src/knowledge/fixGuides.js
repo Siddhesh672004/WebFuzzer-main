@@ -516,6 +516,20 @@ export const FIX_GUIDES = {
     verify: 'Re-run SmartFuzz. Injected CRLF payloads should no longer appear as separate response headers.',
     ref: 'https://owasp.org/www-community/vulnerabilities/CRLF_Injection',
   },
+  exposed_secret: {
+    what: 'A secret credential (API key, database password, private key, or access token) was found hardcoded inside a publicly accessible JavaScript file.',
+    why: 'Anyone who visits your site can read this secret in their browser dev tools and use it to access your external services, databases, or accounts — at your cost and under your identity.',
+    steps: [
+      'Rotate the exposed credential IMMEDIATELY — assume it is already compromised.',
+      'Move the secret out of frontend JS into a backend-only environment variable (process.env / .env, never committed).',
+      'If the key is needed by the browser, proxy the call through your own backend so the secret never reaches the client.',
+      'Add secret scanning to CI (gitleaks / detect-secrets / GitHub secret scanning) and a pre-commit hook to stop the next leak.',
+    ],
+    before: `// frontend bundle — anyone can read this\nconst apiKey = "AIzaSyAbc123...";\nfetch(\`https://api.example.com?key=\${apiKey}\`);`,
+    after: `// backend only — key stays on the server\nconst apiKey = process.env.GOOGLE_API_KEY;\n// frontend calls YOUR backend; the backend calls the external service`,
+    verify: 'Rotate the key, redeploy, then re-run SmartFuzz — the secret should no longer appear in any JS file. Check provider logs for unauthorized use since first deploy.',
+    ref: 'https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_credentials',
+  },
 };
 
 /** Get the fix guide for a vuln type, or a generic fallback. */

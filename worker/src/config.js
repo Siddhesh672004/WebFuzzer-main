@@ -27,6 +27,12 @@ const schema = z.object({
   SCAN_MAX_BODY_BYTES: z.coerce.number().int().positive().default(2097152),
   SCAN_ALLOW_PRIVATE: boolish(false),
 
+  // Screenshot evidence (Puppeteer). Off by default so the default build and
+  // CI stay browser-free; opt in with SCAN_SCREENSHOTS=true. SCREENSHOT_DIR is
+  // shared with the backend (Docker volume) so it can serve the captured PNGs.
+  SCAN_SCREENSHOTS: boolish(false),
+  SCREENSHOT_DIR: z.string().min(1).default('/tmp/smartfuzz-screenshots'),
+
   WORKER_FUZZ_CONCURRENCY: z.coerce.number().int().positive().default(5),
 
   // Fan-out mode: when true, a scan is split into one BullMQ job per module

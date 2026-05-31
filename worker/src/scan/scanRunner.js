@@ -8,6 +8,8 @@ import { scanExposedFiles } from '../engine/exposedFiles.js';
 import { fingerprint } from '../engine/techFingerprinter.js';
 import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { testAuth } from '../engine/authTester.js';
+import { scanJsSecrets } from '../engine/jsSecretScanner.js';
+import { makeFinding } from '../engine/findingFactory.js';
 import { childLogger } from '../logger.js';
 
 // Scan runner — the orchestrator that turns a queued scan into findings. Fans
@@ -21,8 +23,9 @@ import { childLogger } from '../logger.js';
 
 const log = childLogger('scanRunner');
 
-// Module weights for the overall progress percentage.
-const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5 };
+// Module weights for the overall progress percentage. pct() normalizes by the
+// sum of active-module weights, so these need not total 100.
+const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5, jsSecrets: 10 };
 
 export class ScanRunner {
   /**
@@ -40,17 +43,18 @@ export class ScanRunner {
     this.cfg = deps.config || {};
     this.models = deps.models || { Scan, Endpoint, Vulnerability };
     this.publish = deps.publish || (() => {});
-    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech', 'fuzzer', 'auth'];
+    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech', 'fuzzer', 'auth', 'jsSecrets'];
 
     const limiter = new RateLimiter(this.cfg.rateLimit || 10);
     this.http =
       deps.http ||
       new HttpClient({ rateLimiter: limiter, allowPrivate: this.cfg.allowPrivate });
 
-    this.progress = { crawler: 0, passive: 0, exposed: 0, tech: 0, fuzzer: 0, auth: 0 };
+    this.progress = { crawler: 0, passive: 0, exposed: 0, tech: 0, fuzzer: 0, auth: 0, jsSecrets: 0 };
     this.counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
     this.endpointCount = 0;
     this.vulnCount = 0;
+    this.jsUrls = [];
   }
 
   emit(kind, data) {
@@ -133,6 +137,8 @@ export class ScanRunner {
       ).catch(() => {});
     }
     this.endpointCount = result.endpoints.length;
+    // JS file URLs (<script src>) collected for the JS Secret Scanner.
+    this.jsUrls = result.jsUrls || [];
     this.progress.crawler = 100;
     this.setModule('crawler', 'completed');
     await this.pushProgress('crawler');
@@ -223,6 +229,51 @@ export class ScanRunner {
     await this.pushProgress('auth');
   }
 
+  async runJsSecrets() {
+    this.setModule('jsSecrets', 'running');
+    const urls = this.jsUrls || [];
+    if (urls.length === 0) {
+      // Nothing to scan — complete cleanly with a no-op summary.
+      this.progress.jsSecrets = 100;
+      this.setModule('jsSecrets', 'completed');
+      await this.pushProgress('jsSecrets');
+      return;
+    }
+    try {
+      const raw = await scanJsSecrets({
+        urls,
+        http: this.http,
+        scanId: this.scanId,
+        publish: this.publish,
+      });
+      // Normalize each secret finding through the shared factory (severity +
+      // CVSS from the subtype), then re-attach the secret-specific metadata that
+      // makeFinding doesn't carry. The secret type is used as the signature
+      // `param` so distinct secrets in the SAME file get distinct signatures
+      // (otherwise they'd collide and dedupe to one) while staying stable across
+      // rescans for the comparison engine.
+      const findings = raw.map((r) => ({
+        ...makeFinding({
+          type: r.type,
+          subtype: r.subtype,
+          url: r.jsFileUrl,
+          param: r.secretType,
+          evidence: r.evidence,
+        }),
+        secretType: r.secretType,
+        jsFileUrl: r.jsFileUrl,
+        lineNumber: r.lineNumber,
+        matchPreview: r.matchPreview,
+      }));
+      await this.saveFindings(findings);
+    } catch (err) {
+      log.warn({ err: err.message }, 'js secret scanner failed');
+    }
+    this.progress.jsSecrets = 100;
+    this.setModule('jsSecrets', 'completed');
+    await this.pushProgress('jsSecrets');
+  }
+
   /** Run the full scan. Returns a summary. */
   async run() {
     this.emit(SSE_EVENTS.STATUS, { status: 'running' });
@@ -244,6 +295,7 @@ export class ScanRunner {
     if (this.modules.includes('tech')) concurrentRunners.push(() => this.runTech());
     if (this.modules.includes('fuzzer')) concurrentRunners.push(() => this.runFuzzer(crawledEndpoints));
     if (this.modules.includes('auth')) concurrentRunners.push(() => this.runAuth());
+    if (this.modules.includes('jsSecrets')) concurrentRunners.push(() => this.runJsSecrets());
 
     const results = await Promise.allSettled(concurrentRunners.map((fn) => fn()));
     results.filter((r) => r.status === 'rejected').forEach((r) => log.error({ err: r.reason?.message }, 'module failed'));

@@ -42,6 +42,10 @@ const schema = z.object({
   SCAN_MAX_BODY_BYTES: z.coerce.number().int().positive().default(2097152),
   SCAN_ALLOW_PRIVATE: boolish(false),
 
+  // Directory where the worker writes screenshot evidence PNGs. Shared with the
+  // worker via a Docker volume so the backend can serve them over /api/screenshots.
+  SCREENSHOT_DIR: z.string().min(1).default('/tmp/smartfuzz-screenshots'),
+
   WORKER_FUZZ_CONCURRENCY: z.coerce.number().int().positive().default(5),
 
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
