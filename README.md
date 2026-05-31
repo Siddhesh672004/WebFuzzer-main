@@ -7,7 +7,7 @@ SmartFuzz gives students, junior developers, and small teams a Burp Suite–leve
 scanning experience at **zero cost**, with a clean, modern, hacker-themed UI.
 You verify by email OTP, paste a target URL, and SmartFuzz crawls it, runs six
 scanning modules, CVSS-scores every finding, generates step-by-step fix guidance,
-and lets you rescan and compare results over time — all running locally via Docker,
+and lets you rescan and compare the results over time — all running locally via Docker,
 **with no paid AI APIs and no cloud dependency**.
 
 ---
