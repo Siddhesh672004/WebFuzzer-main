@@ -72,6 +72,20 @@ describe('extractFromHtml', () => {
     const { links } = extractFromHtml(html, 'https://x.com/');
     expect(links).toHaveLength(0);
   });
+
+  it('collects <script src> URLs as absolute jsUrls', () => {
+    const html = `<script src="/static/app.js"></script>
+      <script src="https://x.com/bundle.min.js"></script>
+      <script>console.log('inline')</script>
+      <script src="https://cdn.example.com/lib.js"></script>`;
+    const { jsUrls } = extractFromHtml(html, 'https://x.com/');
+    expect(jsUrls).toContain('https://x.com/static/app.js');
+    expect(jsUrls).toContain('https://x.com/bundle.min.js');
+    // Absolute cross-host src is captured here; same-host filtering happens in crawl().
+    expect(jsUrls).toContain('https://cdn.example.com/lib.js');
+    // Inline scripts (no src) are not collected.
+    expect(jsUrls).toHaveLength(3);
+  });
 });
 
 describe('crawl', () => {
@@ -121,5 +135,17 @@ describe('crawl', () => {
     };
     const res = await crawl('https://x.com', fakeHttp(pages), { maxDepth: 1 });
     expect(res.endpoints).toHaveLength(0);
+  });
+
+  it('collects same-host JS files and drops cross-host CDN scripts', async () => {
+    const pages = {
+      'https://x.com': {
+        html: `<script src="/static/main.js"></script>
+          <script src="https://cdn.example.com/jquery.js"></script>`,
+      },
+    };
+    const res = await crawl('https://x.com', fakeHttp(pages), { maxDepth: 1 });
+    expect(res.jsUrls).toContain('https://x.com/static/main.js');
+    expect(res.jsUrls.some((u) => u.includes('cdn.example.com'))).toBe(false);
   });
 });

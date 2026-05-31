@@ -10,6 +10,7 @@ import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { testAuth } from '../engine/authTester.js';
 import { scanJsSecrets } from '../engine/jsSecretScanner.js';
 import { makeFinding } from '../engine/findingFactory.js';
+import { config } from '../config.js';
 import { childLogger } from '../logger.js';
 
 // Scan runner — the orchestrator that turns a queued scan into findings. Fans
@@ -26,6 +27,9 @@ const log = childLogger('scanRunner');
 // Module weights for the overall progress percentage. pct() normalizes by the
 // sum of active-module weights, so these need not total 100.
 const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5, jsSecrets: 10 };
+
+// Vuln types for which a browser screenshot is meaningful proof.
+const SCREENSHOT_TYPES = new Set(['xss', 'stored_xss', 'open_redirect']);
 
 export class ScanRunner {
   /**
@@ -108,11 +112,50 @@ export class ScanRunner {
           this.vulnCount += 1;
           this.counts[f.severity] = (this.counts[f.severity] || 0) + 1;
           this.emit(SSE_EVENTS.FINDING, { type: f.type, severity: f.severity, cvssScore: f.cvssScore, url: f.url, param: f.param });
+          // Screenshot evidence — only for visually-demonstrable vuln types, only
+          // when enabled, and strictly non-blocking so capture never delays or
+          // fails the scan. Needs the freshly-inserted _id (res.upsertedId).
+          if (config.SCAN_SCREENSHOTS && res.upsertedId && SCREENSHOT_TYPES.has(f.type)) {
+            this.captureScreenshot(res.upsertedId, f);
+          }
         }
       } catch (err) {
         log.warn({ err: err.message, sig: f.signature }, 'failed to save finding');
       }
     }
+  }
+
+  /**
+   * Fire-and-forget screenshot capture for a confirmed finding. Never awaited by
+   * the caller and fully wrapped in catches, so a capture failure (or a missing
+   * Chromium) can never delay or fail the scan. The screenshot service imports
+   * Puppeteer lazily, so this path costs nothing when SCAN_SCREENSHOTS is off.
+   */
+  captureScreenshot(vulnId, f) {
+    const proofUrl = f.param && f.payload
+      ? `${f.url}${f.url.includes('?') ? '&' : '?'}${encodeURIComponent(f.param)}=${encodeURIComponent(f.payload)}`
+      : f.url;
+    import('../services/screenshotCapture.js')
+      .then(({ captureVulnScreenshot }) =>
+        captureVulnScreenshot({
+          scanId: this.scanId,
+          vulnId,
+          targetUrl: proofUrl,
+          vulnType: f.type,
+          payload: f.payload,
+        }),
+      )
+      .then((result) => {
+        if (result?.success) {
+          return this.models.Vulnerability.findByIdAndUpdate(vulnId, {
+            screenshotFile: result.filename,
+            screenshotDialogFired: result.dialogFired,
+            screenshotDialogMessage: result.dialogMessage,
+          });
+        }
+        return null;
+      })
+      .catch((err) => log.warn({ err: err.message, vulnId }, 'screenshot pipeline failed'));
   }
 
   // ── Module runners ──

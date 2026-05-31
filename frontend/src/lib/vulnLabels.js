@@ -44,6 +44,7 @@ const LABELS = {
   csrf: 'Cross-Site Request Forgery',
   insecure_cookie: 'Insecure Cookie',
   info_disclosure: 'Information Disclosure',
+  exposed_secret: 'Exposed Secret',
 };
 
 export function getVulnLabel(type) {

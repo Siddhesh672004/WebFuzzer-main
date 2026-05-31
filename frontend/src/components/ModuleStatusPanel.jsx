@@ -1,6 +1,6 @@
-import { Globe, Eye, FileSearch, Cpu, Crosshair, KeyRound, Check, X, Loader2, Circle } from 'lucide-react';
+import { Globe, Eye, FileSearch, Cpu, Crosshair, KeyRound, Key, Check, X, Loader2, Circle } from 'lucide-react';
 
-// ModuleStatusPanel — the six scanning modules with live status. Status comes
+// ModuleStatusPanel — the scanning modules with live status. Status comes
 // from SSE 'module' events keyed by module name. Running modules pulse.
 
 const MODULES = [
@@ -10,6 +10,7 @@ const MODULES = [
   { key: 'tech', label: 'Tech Fingerprint', Icon: Cpu },
   { key: 'fuzzer', label: 'Payload Fuzzer', Icon: Crosshair },
   { key: 'auth', label: 'Auth Tests', Icon: KeyRound },
+  { key: 'jsSecrets', label: 'JS Secret Scanner', Icon: Key },
 ];
 
 function StatusDot({ status }) {

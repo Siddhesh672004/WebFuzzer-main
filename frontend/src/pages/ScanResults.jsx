@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Shield, Download, ArrowLeft, Search, RefreshCw } from 'lucide-react';
+import { Shield, Download, ArrowLeft, Search, RefreshCw, Key } from 'lucide-react';
 import { scanApi, reportApi, vulnApi, saveBlob } from '../api/scans.js';
 import { Button, Alert, Input } from '../components/ui.jsx';
 import { SecurityScoreGauge } from '../components/SecurityScoreGauge.jsx';
@@ -46,6 +46,7 @@ export default function ScanResults() {
   const vulns = vulnData?.vulnerabilities || [];
 
   const types = useMemo(() => [...new Set(vulns.map((v) => v.type))], [vulns]);
+  const hasSecrets = useMemo(() => vulns.some((v) => v.type === 'exposed_secret'), [vulns]);
 
   const filtered = useMemo(() => {
     return vulns.filter((v) => {
@@ -170,6 +171,18 @@ export default function ScanResults() {
                   {sev}
                 </button>
               ))}
+              {hasSecrets && (
+                <button
+                  onClick={() => setTypeFilter(typeFilter === 'exposed_secret' ? 'all' : 'exposed_secret')}
+                  className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 font-mono text-xs ${
+                    typeFilter === 'exposed_secret'
+                      ? 'border-severity-medium bg-severity-medium/10 text-severity-medium'
+                      : 'border-border text-fg-muted hover:text-fg'
+                  }`}
+                >
+                  <Key size={12} /> Secrets
+                </button>
+              )}
               {types.length > 0 && (
                 <select
                   value={typeFilter}

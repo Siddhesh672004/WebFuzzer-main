@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Copy, Check, CheckCircle2, ShieldCheck, Loader2 } from 'lucide-react';
+import { X, Copy, Check, CheckCircle2, ShieldCheck, Loader2, Key, Camera } from 'lucide-react';
 import { Badge } from './ui/Badge.jsx';
 import { BottomSheet } from './ui/BottomSheet.jsx';
 import { CVSSMeter } from './CVSSMeter.jsx';
@@ -40,21 +40,74 @@ function CopyField({ label, value }) {
 function SheetBody({ vuln, fixGuide, onMarkFixed, onVerify, busy }) {
   const verified = vuln.verificationStatus === 'verified_fixed';
   const persists = vuln.verificationStatus === 'verified_persists';
+  const isSecret = vuln.type === 'exposed_secret';
+  const location = isSecret ? (vuln.jsFileUrl || vuln.url) : vuln.url;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
         <Badge severity={vuln.severity} score={vuln.cvssScore} />
-        <span className="font-mono text-xs text-fg-muted">{vuln.url}{vuln.param ? ` · ${vuln.param}` : ''}</span>
+        <span className="font-mono text-xs text-fg-muted">
+          {location}
+          {isSecret && vuln.lineNumber ? ` · line ${vuln.lineNumber}` : vuln.param ? ` · ${vuln.param}` : ''}
+        </span>
       </div>
 
       <CVSSMeter vector={vuln.cvssVector} score={vuln.cvssScore} />
+
+      {/* Exposed-secret specifics */}
+      {isSecret && (
+        <div className="rounded-md border border-severity-medium/40 bg-severity-medium/5 p-3">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-severity-medium">
+            <Key size={12} /> Exposed Secret
+          </div>
+          {vuln.secretType && (
+            <div className="font-mono text-sm text-fg">{vuln.secretType}</div>
+          )}
+          {vuln.matchPreview && (
+            <pre className="mt-2 overflow-x-auto rounded border border-border bg-bg-inset p-2 font-mono text-xs text-fg-muted"><code>{vuln.matchPreview}</code></pre>
+          )}
+          <p className="mt-2 font-mono text-[11px] text-fg-subtle">
+            Full value is never stored — only this masked preview. Rotate this credential immediately.
+          </p>
+        </div>
+      )}
 
       {vuln.payload && <CopyField label="Payload" value={vuln.payload} />}
       {vuln.evidence && (
         <div>
           <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-fg-subtle">Evidence</div>
           <p className="rounded-md border border-accent/30 bg-accent/5 p-2.5 font-mono text-xs text-fg">{vuln.evidence}</p>
+        </div>
+      )}
+
+      {/* Screenshot evidence (Puppeteer capture for xss/open_redirect) */}
+      {vuln.screenshotFile && (
+        <div>
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-fg-subtle">
+            <Camera size={12} /> Visual Evidence
+          </div>
+          {vuln.screenshotDialogFired && (
+            <div className="mb-2 rounded-md border border-severity-critical/40 bg-severity-critical/10 px-2.5 py-1.5 font-mono text-xs text-severity-critical">
+              ⚠ JavaScript dialog fired: <code>{vuln.screenshotDialogMessage || 'XSS confirmed'}</code>
+            </div>
+          )}
+          <div className="relative overflow-hidden rounded-md border border-border">
+            <img
+              src={`/api/screenshots/${vuln.screenshotFile}`}
+              alt="Vulnerability screenshot evidence"
+              className="block w-full cursor-pointer"
+              onClick={() => window.open(`/api/screenshots/${vuln.screenshotFile}`, '_blank')}
+              onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }}
+            />
+            <a
+              href={`/api/screenshots/${vuln.screenshotFile}`}
+              download
+              className="absolute bottom-2 right-2 rounded border border-border bg-bg-surface px-2 py-1 font-mono text-xs text-fg-muted hover:text-fg"
+            >
+              ↓ Download
+            </a>
+          </div>
         </div>
       )}
 
