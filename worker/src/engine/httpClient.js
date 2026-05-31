@@ -15,6 +15,7 @@ export class HttpClient {
    *   rateLimiter? { take(): Promise<void> }
    *   allowPrivate? boolean
    *   timeoutMs?, maxBodyBytes?
+   *   onActivity? (info: { method, url, hop }) => void   live activity hook (never throws)
    *   axiosInstance? (injectable for tests)
    */
   constructor(opts = {}) {
@@ -22,6 +23,7 @@ export class HttpClient {
     this.allowPrivate = opts.allowPrivate ?? config.SCAN_ALLOW_PRIVATE;
     this.timeoutMs = opts.timeoutMs ?? config.SCAN_REQUEST_TIMEOUT_MS;
     this.maxBodyBytes = opts.maxBodyBytes ?? config.SCAN_MAX_BODY_BYTES;
+    this.onActivity = opts.onActivity || null;
     this.axios = opts.axiosInstance || axios.create();
   }
 
@@ -32,6 +34,16 @@ export class HttpClient {
   async request({ url, method = 'GET', headers = {}, data = undefined, hop = 0 }) {
     await assertSafeUrl(url, { allowPrivate: this.allowPrivate });
     if (this.rateLimiter) await this.rateLimiter.take();
+
+    // Live activity hook — fires once per guarded request (incl. each redirect
+    // hop). Guarded so a misbehaving listener can never break a scan.
+    if (this.onActivity) {
+      try {
+        this.onActivity({ method, url, hop });
+      } catch {
+        /* never let activity reporting affect the request */
+      }
+    }
 
     const start = Date.now();
     let res;

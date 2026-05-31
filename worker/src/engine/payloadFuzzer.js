@@ -36,11 +36,19 @@ export async function fuzzEndpoint(endpoint, http, opts = {}) {
     // eslint-disable-next-line no-await-in-loop
     const baseline = await getBaseline(endpoint, http);
 
-    for (const payload of payloads) {
+    for (let pi = 0; pi < payloads.length; pi++) {
+      const payload = payloads[pi];
       // eslint-disable-next-line no-await-in-loop
       const response = await sendPayload(endpoint, param, payload.value, http);
       payloadsSent += 1;
-      onProgress({ payloadsSent });
+      onProgress({
+        payloadsSent,
+        url: endpoint.url,
+        param: param.name,
+        attackType: payload.type,
+        index: pi + 1,
+        total: payloads.length,
+      });
 
       const result = analyzeResponse(baseline, response, {
         attackType: payload.type,
@@ -60,6 +68,14 @@ export async function fuzzEndpoint(endpoint, http, opts = {}) {
           // eslint-disable-next-line no-await-in-loop
           const mutRes = await sendPayload(endpoint, param, variant, http);
           payloadsSent += 1;
+          onProgress({
+            payloadsSent,
+            url: endpoint.url,
+            param: param.name,
+            attackType: `${payload.type}*`, // mutation variant
+            index: pi + 1,
+            total: payloads.length,
+          });
           const mutResult = analyzeResponse(baseline, mutRes, {
             attackType: payload.type,
             value: variant,

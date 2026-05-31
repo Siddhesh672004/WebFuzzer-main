@@ -28,6 +28,27 @@ const log = childLogger('scanRunner');
 // sum of active-module weights, so these need not total 100.
 const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5, jsSecrets: 10 };
 
+// Live-feed / progress throttling. The activity buffer coalesces request-level
+// lines into one SSE frame at most every ACTIVITY_FLUSH_MS (or when it fills to
+// ACTIVITY_MAX_BATCH); progress writes to Mongo are gated to PROGRESS_MIN_MS so
+// a long fuzz can't storm the DB. The fuzzer samples 1-in-N payloads for the
+// feed so it stays readable instead of a wall of identical lines.
+const ACTIVITY_FLUSH_MS = 300;
+const ACTIVITY_MAX_BATCH = 40;
+const PROGRESS_MIN_MS = 1000;
+const ACTIVITY_PAYLOAD_EVERY = 5;
+
+// Cap an activity line's URL so the live terminal stays readable.
+function shortPath(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    const s = `${u.pathname}${u.search}`;
+    return s.length > 120 ? `${s.slice(0, 117)}…` : s || '/';
+  } catch {
+    return String(rawUrl).slice(0, 120);
+  }
+}
+
 // Vuln types for which a browser screenshot is meaningful proof.
 const SCREENSHOT_TYPES = new Set(['xss', 'stored_xss', 'open_redirect']);
 
@@ -52,20 +73,84 @@ export class ScanRunner {
     const limiter = new RateLimiter(this.cfg.rateLimit || 10);
     this.http =
       deps.http ||
-      new HttpClient({ rateLimiter: limiter, allowPrivate: this.cfg.allowPrivate });
+      new HttpClient({
+        rateLimiter: limiter,
+        allowPrivate: this.cfg.allowPrivate,
+        onActivity: (info) => this.onHttpActivity(info),
+      });
 
     this.progress = { crawler: 0, passive: 0, exposed: 0, tech: 0, fuzzer: 0, auth: 0, jsSecrets: 0 };
     this.counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
     this.endpointCount = 0;
     this.vulnCount = 0;
+    this.payloadsSent = 0;
     this.jsUrls = [];
+    this.startTime = null;
+
+    // Live-activity coalescing + progress-write gating state.
+    this._activityBuf = [];
+    this._lastActivityFlush = 0;
+    this._lastProgressPush = 0;
   }
 
   emit(kind, data) {
     this.publish(this.scanId, { kind, data });
   }
 
+  // ── Live activity feed ──
+
+  /** Called by HttpClient for every guarded request. */
+  onHttpActivity({ method, url }) {
+    this.activity(`→ ${method} ${shortPath(url)}`, 'req');
+  }
+
+  /** Buffer a human-readable activity line; flushed (coalesced) to SSE. */
+  activity(message, type = 'info') {
+    this._activityBuf.push({ message, type });
+    this.flushActivity(false);
+  }
+
+  /**
+   * Flush buffered activity lines as one batched ACTIVITY event. Time-coalesced
+   * (no timers): a flush happens on the next push after ACTIVITY_FLUSH_MS, when
+   * the buffer fills, or when forced (module boundaries + before `done`).
+   */
+  flushActivity(force) {
+    const now = Date.now();
+    if (!force && now - this._lastActivityFlush < ACTIVITY_FLUSH_MS && this._activityBuf.length < ACTIVITY_MAX_BATCH) {
+      return;
+    }
+    if (this._activityBuf.length === 0) return;
+    let lines = this._activityBuf;
+    this._activityBuf = [];
+    if (lines.length > ACTIVITY_MAX_BATCH) {
+      const extra = lines.length - ACTIVITY_MAX_BATCH;
+      lines = lines.slice(0, ACTIVITY_MAX_BATCH);
+      lines.push({ message: `… (+${extra} more requests)`, type: 'info' });
+    }
+    this._lastActivityFlush = now;
+    this.emit(SSE_EVENTS.ACTIVITY, { lines });
+  }
+
+  /** pushProgress, gated to at most once per PROGRESS_MIN_MS. Fire-and-forget. */
+  maybePushProgress(currentModule) {
+    const now = Date.now();
+    if (now - this._lastProgressPush < PROGRESS_MIN_MS) return;
+    this._lastProgressPush = now;
+    void this.pushProgress(currentModule);
+  }
+
   setModule(module, status) {
+    // Boundary flush so activity lines read in natural order around the
+    // module transition.
+    this.flushActivity(true);
+    // Persist per-module lifecycle so the polling fallback (and SSE reconnects)
+    // can render each module's state — not just the live SSE stream.
+    this.models.Scan.updateOne(
+      { _id: this.scanId },
+      { $set: { [`progress.moduleStatus.${module}`]: status } },
+    ).catch(() => {});
+    this.activity(`module ${module}: ${status}`, status === 'failed' ? 'error' : 'info');
     this.emit(SSE_EVENTS.MODULE, { module, status });
   }
 
@@ -165,9 +250,11 @@ export class ScanRunner {
     const result = await crawl(this.targetUrl, this.http, {
       maxDepth: this.cfg.maxDepth ?? 3,
       maxEndpoints: this.cfg.maxEndpoints ?? 500,
-      onProgress: ({ endpointsDiscovered }) => {
+      onProgress: ({ endpointsDiscovered, url }) => {
         this.endpointCount = endpointsDiscovered;
         this.progress.crawler = Math.min(90, endpointsDiscovered);
+        if (url) this.activity(`crawler found ${shortPath(url)}`, 'info');
+        this.maybePushProgress('crawler');
       },
     });
     // Persist endpoints.
@@ -203,8 +290,10 @@ export class ScanRunner {
   async runExposed() {
     this.setModule('exposed', 'running');
     const { findings } = await scanExposedFiles(this.targetUrl, this.http, {
-      onProgress: ({ checked, total }) => {
+      onProgress: ({ checked, total, path: p }) => {
         this.progress.exposed = Math.round((checked / total) * 100);
+        if (p) this.activity(`exposed-files: checking ${p} (${checked}/${total})`, 'req');
+        this.maybePushProgress('exposed');
       },
     });
     await this.saveFindings(findings);
@@ -228,6 +317,7 @@ export class ScanRunner {
   async runFuzzer(endpoints = []) {
     this.setModule('fuzzer', 'running');
     let totalPayloadsSent = 0;
+    let liveCount = 0; // drives live-feed sampling + progress throttle only
     const endpointsToFuzz = endpoints.length > 0 ? endpoints : [];
 
     for (let i = 0; i < endpointsToFuzz.length; i++) {
@@ -237,11 +327,20 @@ export class ScanRunner {
         const { findings, payloadsSent } = await fuzzEndpoint(endpoint, this.http, {
           maxPayloads: 50,
           onFinding: (f) => this.saveFindings([f]),
-          onProgress: () => {
-            totalPayloadsSent += 1;
+          onProgress: ({ url, param, attackType, index, total }) => {
+            liveCount += 1;
             this.progress.fuzzer = Math.round(((i + 1) / endpointsToFuzz.length) * 100);
+            // Sample the feed so a 50-payload sweep doesn't flood the terminal.
+            if (attackType && liveCount % ACTIVITY_PAYLOAD_EVERY === 0) {
+              this.activity(
+                `fuzzing ${shortPath(url || endpoint.url)} [${attackType}]${param ? ` ${param}` : ''} ${index ?? '?'}/${total ?? '?'}`,
+                'req',
+              );
+            }
+            this.maybePushProgress('fuzzer');
           },
         });
+        // payloadsSent (return value) is authoritative: base + mutation payloads.
         totalPayloadsSent += payloadsSent;
         await this.saveFindings(findings);
       } catch (err) {
@@ -249,6 +348,7 @@ export class ScanRunner {
       }
     }
 
+    this.payloadsSent = totalPayloadsSent;
     await this.models.Scan.updateOne(
       { _id: this.scanId },
       { $set: { 'progress.payloadsSent': totalPayloadsSent } },
@@ -319,8 +419,9 @@ export class ScanRunner {
 
   /** Run the full scan. Returns a summary. */
   async run() {
+    this.startTime = new Date();
     this.emit(SSE_EVENTS.STATUS, { status: 'running' });
-    await this.models.Scan.updateOne({ _id: this.scanId }, { $set: { status: 'running', 'stats.startTime': new Date() } }).catch(() => {});
+    await this.models.Scan.updateOne({ _id: this.scanId }, { $set: { status: 'running', 'stats.startTime': this.startTime } }).catch(() => {});
 
     // Crawler runs first — its output feeds the fuzzer.
     let crawledEndpoints = [];
@@ -345,6 +446,7 @@ export class ScanRunner {
 
     const status = 'completed';
     const endTime = new Date();
+    const durationSeconds = Math.max(0, Math.round((endTime - this.startTime) / 1000));
     await this.models.Scan.updateOne(
       { _id: this.scanId },
       {
@@ -352,7 +454,9 @@ export class ScanRunner {
           status,
           'progress.percentComplete': 100,
           'stats.endTime': endTime,
+          'stats.durationSeconds': durationSeconds,
           'stats.totalEndpoints': this.endpointCount,
+          'stats.totalPayloadsSent': this.payloadsSent,
           'stats.totalVulnerabilities': this.vulnCount,
           'stats.critical': this.counts.critical || 0,
           'stats.high': this.counts.high || 0,
@@ -368,6 +472,7 @@ export class ScanRunner {
       },
     ).catch(() => {});
 
+    this.flushActivity(true);
     this.emit(SSE_EVENTS.STATUS, { status });
     this.emit(SSE_EVENTS.DONE, { status });
 

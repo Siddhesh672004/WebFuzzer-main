@@ -69,7 +69,7 @@ export async function scanExposedFiles(baseUrl, http, opts = {}) {
     // eslint-disable-next-line no-await-in-loop
     const res = await http.get(url);
     checked += 1;
-    onProgress({ checked, total: paths.length });
+    onProgress({ checked, total: paths.length, path: entry.path });
     if (!res.ok) continue;
 
     const exposed = isExposed(res, entry, isSoft404, baseline);

@@ -183,7 +183,7 @@ export async function crawl(targetUrl, http, opts = {}) {
       const key = endpointKey(e);
       if (!endpointsByKey.has(key)) {
         endpointsByKey.set(key, e);
-        onProgress({ endpointsDiscovered: endpointsByKey.size });
+        onProgress({ endpointsDiscovered: endpointsByKey.size, url: e.url });
         if (endpointsByKey.size >= maxEndpoints) break;
       }
     }

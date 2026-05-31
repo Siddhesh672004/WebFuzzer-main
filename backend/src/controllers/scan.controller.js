@@ -179,8 +179,10 @@ export const streamProgress = asyncHandler(async (req, res) => {
   };
   sub.on('message', onMessage);
 
-  // Heartbeat to keep the connection alive through proxies.
-  const heartbeat = setInterval(() => res.write(': ping\n\n'), 15000);
+  // Heartbeat to keep the connection alive through proxies AND let the browser
+  // detect "alive but quiet" — a named event reaches EventSource listeners
+  // (an SSE comment does not), so the monitor can show a live/stale indicator.
+  const heartbeat = setInterval(() => res.write(`event: heartbeat\ndata: ${JSON.stringify({ t: Date.now() })}\n\n`), 15000);
 
   let closed = false;
   function cleanup() {

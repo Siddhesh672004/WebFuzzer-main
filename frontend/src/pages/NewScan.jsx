@@ -83,6 +83,10 @@ export default function NewScan() {
           <div>
             <h2 className="mb-2 font-mono text-xs font-bold uppercase tracking-wide text-fg-muted">Scan Depth</h2>
             <ScanPresetSelector value={preset} onChange={(id) => setPreset(id)} />
+            <p className="mt-2 font-mono text-xs text-fg-subtle">{SCAN_PRESETS[preset]?.desc}</p>
+            <p className="mt-1 font-mono text-[11px] text-fg-subtle">
+              Tip: a scan can finish quickly when a site has few testable inputs (forms, query parameters) — that's normal, not a failure.
+            </p>
           </div>
 
           {/* Advanced options */}
@@ -108,9 +112,19 @@ export default function NewScan() {
                     className="mt-1 w-full accent-accent"
                   />
                 </label>
-                <div className="font-mono text-xs text-fg-subtle">
-                  Max depth {presetCfg.maxDepth} · up to {presetCfg.maxEndpoints} endpoints
+                <p className="font-mono text-[11px] leading-4 text-fg-subtle">
+                  How many requests per second SmartFuzz sends to the target. Lower is gentler on the
+                  server (and stealthier); higher is faster but heavier. The default is tuned per preset.
+                </p>
+                <div className="font-mono text-xs text-fg-muted">
+                  Max depth <span className="text-accent">{presetCfg.maxDepth}</span> · up to{' '}
+                  <span className="text-accent">{presetCfg.maxEndpoints}</span> endpoints
                 </div>
+                <p className="font-mono text-[11px] leading-4 text-fg-subtle">
+                  Max depth = how many link-hops from the start page the crawler follows.
+                  Endpoints = the cap on distinct pages/parameters it will test. Both come from the
+                  selected preset.
+                </p>
               </div>
             )}
           </div>

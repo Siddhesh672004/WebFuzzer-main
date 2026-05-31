@@ -86,9 +86,18 @@ describe('ScanRunner', () => {
     expect(updated.status).toBe('completed');
     expect(updated.progress.percentComplete).toBe(100);
     expect(updated.stats.totalVulnerabilities).toBe(vulns.length);
+
+    // Per-module lifecycle persisted (drives the polling fallback / reconnects).
+    expect(updated.progress.moduleStatus.get('crawler')).toBe('completed');
+    expect(updated.progress.moduleStatus.get('passive')).toBe('completed');
+
+    // Final stats reconciled (regression: these used to stay 0).
+    expect(updated.stats.totalEndpoints).toBe(endpoints.length);
+    expect(typeof updated.stats.totalPayloadsSent).toBe('number');
+    expect(updated.stats.durationSeconds).toBeGreaterThanOrEqual(0);
   });
 
-  it('emits progress, finding, module, and done SSE events', async () => {
+  it('emits progress, finding, module, activity, and done SSE events', async () => {
     const scan = await makeScan();
     const events = [];
     const runner = new ScanRunner({
@@ -105,7 +114,15 @@ describe('ScanRunner', () => {
     expect(kinds.has('module')).toBe(true);
     expect(kinds.has('progress')).toBe(true);
     expect(kinds.has('finding')).toBe(true);
+    expect(kinds.has('activity')).toBe(true);
     expect(kinds.has('done')).toBe(true);
+
+    // Activity events carry batched human-readable lines.
+    const activity = events.find((e) => e.kind === 'activity');
+    expect(Array.isArray(activity.data.lines)).toBe(true);
+    expect(activity.data.lines.length).toBeGreaterThan(0);
+    expect(activity.data.lines[0]).toHaveProperty('message');
+    expect(activity.data.lines[0]).toHaveProperty('type');
   });
 
   it('dedupes findings by signature within a scan', async () => {

@@ -13,6 +13,7 @@ export const SSE_EVENTS = Object.freeze({
   FINDING: 'finding', // a newly confirmed vulnerability (summary)
   MODULE: 'module', // { module, status }
   STATUS: 'status', // { status: running|completed|failed }
+  ACTIVITY: 'activity', // { lines: [{ message, type }] } — batched + throttled live feed
   DONE: 'done', // terminal — stream can close
   VERIFY: 'verify_result', // { vulnId, status: verified_fixed|verified_persists }
 });

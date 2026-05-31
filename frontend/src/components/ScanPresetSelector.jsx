@@ -7,18 +7,21 @@ import { Zap, Gauge, Radar } from 'lucide-react';
 export const SCAN_PRESETS = {
   quick: {
     id: 'quick', name: 'Quick', Icon: Zap, time: '1–2 min',
+    desc: 'A fast surface check. Crawls one level deep and runs the lightweight modules — good for a first look or re-checking a known site.',
     config: { maxDepth: 1, maxEndpoints: 50, rateLimit: 20 },
-    includes: ['Shallow crawl', 'Passive + exposed files', 'Top payloads only'],
+    includes: ['Shallow crawl (1 level)', 'Passive + exposed files', 'Top payloads only'],
   },
   standard: {
     id: 'standard', name: 'Standard', Icon: Gauge, time: '10–15 min',
+    desc: 'The balanced default. Crawls the site, then runs all six modules with the full curated payload set. Recommended for most targets.',
     config: { maxDepth: 3, maxEndpoints: 300, rateLimit: 10 },
-    includes: ['Full crawl', 'All six modules', 'Curated payload set', 'Mutation engine'],
+    includes: ['Full crawl (3 levels)', 'All six modules', 'Curated payload set', 'Mutation engine'],
   },
   deep: {
     id: 'deep', name: 'Deep', Icon: Radar, time: '30+ min',
+    desc: 'The exhaustive sweep. Crawls deeper, tests more endpoints, and fuzzes aggressively. Slowest — use when you want maximum coverage.',
     config: { maxDepth: 5, maxEndpoints: 1000, rateLimit: 8 },
-    includes: ['Exhaustive crawl', 'All modules', 'Extended payloads', 'Aggressive mutation'],
+    includes: ['Exhaustive crawl (5 levels)', 'All modules', 'Extended payloads', 'Aggressive mutation'],
   },
 };
 

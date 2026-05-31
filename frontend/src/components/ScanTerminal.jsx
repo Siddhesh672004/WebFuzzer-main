@@ -7,6 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 const TYPE_CLS = {
   info: 'text-fg-muted',
+  req: 'text-sky-400/70',
   found: 'text-accent',
   error: 'text-severity-critical',
   success: 'text-accent',
