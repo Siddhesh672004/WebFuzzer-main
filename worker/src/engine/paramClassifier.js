@@ -36,8 +36,8 @@ export const CATEGORY_ATTACKS = Object.freeze({
 const RULES = [
   { category: 'NUMERIC_ID', keywords: ['id', 'uid', 'user_id', 'product_id', 'item_id', 'post_id', 'order_id', 'record_id', 'pid', 'nid', 'eid'] },
   { category: 'SEARCH_FIELD', keywords: ['search', 'q', 'query', 'keyword', 'term', 'find', 'filter', 'text', 's', 'kw'] },
-  { category: 'FILE_PATH', keywords: ['file', 'path', 'dir', 'folder', 'template', 'page', 'include', 'load', 'read', 'document', 'doc', 'filename', 'filepath'] },
-  { category: 'URL_FIELD', keywords: ['redirect', 'url', 'next', 'return', 'goto', 'destination', 'redir', 'target', 'link', 'ref', 'referer', 'callback', 'continue', 'forward'] },
+  { category: 'FILE_PATH', keywords: ['file', 'path', 'dir', 'folder', 'template', 'page', 'include', 'load', 'read', 'document', 'doc', 'filename', 'filepath', 'content', 'resource'] },
+  { category: 'URL_FIELD', keywords: ['redirect', 'url', 'uri', 'next', 'return', 'goto', 'destination', 'dest', 'redir', 'target', 'link', 'ref', 'referer', 'callback', 'continue', 'forward', 'src', 'source', 'fetch', 'feed', 'proxy', 'remote', 'webhook', 'imageurl', 'image_url', 'fileurl', 'file_url', 'site', 'domain', 'host'] },
   { category: 'EMAIL', keywords: ['email', 'mail', 'e-mail'] },
   { category: 'COMMAND', keywords: ['cmd', 'exec', 'command', 'run', 'ping', 'host', 'ip', 'shell', 'execute', 'system'] },
   { category: 'AUTH_FIELD', keywords: ['user', 'username', 'login', 'uname', 'pass', 'password', 'auth', 'token', 'secret', 'key', 'apikey', 'api_key', 'credential'] },

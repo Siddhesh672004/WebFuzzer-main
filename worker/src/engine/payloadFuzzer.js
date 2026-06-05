@@ -93,7 +93,49 @@ export async function fuzzEndpoint(endpoint, http, opts = {}) {
     }
   }
 
+  // ── XXE probe (body-level, independent of param classification) ──
+  // XXE only manifests when the server parses an XML request *body*, so it can't
+  // be driven by query/form param fuzzing. For body-accepting endpoints we POST
+  // a few raw XML payloads with Content-Type: application/xml and confirm on a
+  // file-disclosure / entity-reflection signature. Safe against false positives:
+  // the detector requires actual /etc/passwd-class content echoed back.
+  const method = (endpoint.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    const xxePayloads = await loadPayloads(['xxe'], { cap: 4, model: opts.payloadModel });
+    if (xxePayloads.length > 0) {
+      const xmlBaseline = await getBaseline(endpoint, http);
+      for (const payload of xxePayloads) {
+        // eslint-disable-next-line no-await-in-loop
+        const response = await sendXmlPayload(endpoint, payload.value, http);
+        payloadsSent += 1;
+        onProgress({
+          payloadsSent, url: endpoint.url, param: 'xml_body',
+          attackType: 'xxe', index: 0, total: xxePayloads.length,
+        });
+        const result = analyzeResponse(xmlBaseline, response, {
+          attackType: 'xxe', value: payload.value, url: endpoint.url, param: 'xml_body',
+        });
+        if (result?.finding) {
+          findings.push(result.finding);
+          onFinding(result.finding);
+          // eslint-disable-next-line no-await-in-loop
+          await recordSuccess('xxe', payload.value, opts.payloadModel).catch(() => {});
+          break; // one confirmed XXE per endpoint is enough
+        }
+      }
+    }
+  }
+
   return { findings, payloadsSent };
+}
+
+async function sendXmlPayload(endpoint, xml, http) {
+  return http.request({
+    url: endpoint.url,
+    method: endpoint.method && endpoint.method !== 'GET' ? endpoint.method : 'POST',
+    headers: { 'Content-Type': 'application/xml' },
+    data: xml,
+  });
 }
 
 async function getBaseline(endpoint, http) {

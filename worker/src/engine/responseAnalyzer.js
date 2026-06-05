@@ -39,6 +39,24 @@ const RCE_PATTERNS = [
   /Linux version \d/i,
   /Darwin Kernel Version/i,
   /Microsoft Windows \[Version/i,
+  /\bCOMPUTERNAME=/i, // Windows `set` / env output
+  /\bUSERDOMAIN=/i,
+];
+
+// ── Stack-trace / verbose-error patterns (info disclosure) ──
+// A payload-triggered 500 that leaks one of these reveals server internals.
+const STACK_TRACE_PATTERNS = [
+  /at\s+[\w.$]+\([\w.]+\.java:\d+\)/, // Java stack frame
+  /Traceback \(most recent call last\)/, // Python
+  /Fatal error:\s/i, // PHP fatal
+  /Warning:\s+\w+\(\)/, // PHP warning
+  /Exception in thread/, // Java
+  /System\.\w+(\.\w+)*Exception/, // .NET
+  /Microsoft\.\w+\.RuntimeBinder/, // .NET dynamic binder
+  /\bCaused by:\s/, // Java cause chain
+  /org\.springframework\./, // Spring
+  /com\.mysql\.(jdbc|cj)\./, // MySQL JDBC
+  /ORA-\d{5}/, // Oracle
 ];
 
 // ── SSTI confirmation ──
@@ -73,6 +91,34 @@ const XXE_PATTERNS = [
   /\[fonts\]/i, // win.ini
   /\[extensions\]/i, // win.ini
   /for 16-bit app support/i, // win.ini
+];
+
+// ── SSRF confirmation ──
+// SSRF is only confirmed with PROOF in the response body: cloud-metadata
+// content or an internal-service banner that the target fetched on our behalf.
+// We never flag on a 200 alone (the classic SSRF false positive). A latency
+// spike with no proof is a HIGH_INTEREST signal only, never a recorded finding.
+const SSRF_METADATA_PATTERNS = [
+  /\bami-id\b/i,
+  /\binstance-id\b/i,
+  /\binstance-type\b/i,
+  /\blocal-ipv4\b/i,
+  /\bpublic-ipv4\b/i,
+  /iam\/security-credentials/i,
+  /computeMetadata/i,
+  /"AccessKeyId"/,
+  /"SecretAccessKey"/,
+  /availability-zone/i,
+  /\bsecurity-credentials\b/i,
+];
+const SSRF_INTERNAL_PATTERNS = [
+  /<h1>\s*Apache Tomcat/i,
+  /Welcome to nginx!/i,
+  /<title>phpMyAdmin/i,
+  /"cluster_name"\s*:/, // Elasticsearch root
+  /-ERR wrong number of arguments/, // Redis protocol error
+  /It works!/, // default Apache
+  /root:x:0:0/, // /etc/passwd via file:// SSRF
 ];
 
 // ── LDAP injection confirmation ──
@@ -171,6 +217,21 @@ export function analyzeResponse(baseline, response, payloadMeta) {
         };
       }
     }
+    // Time-based blind RCE: a sleep/ping payload that delays the response well
+    // beyond baseline (≥5s and ≥4s over baseline) confirms command execution
+    // even with no output echoed back.
+    if (/\b(sleep|ping|timeout)\b/i.test(payload)) {
+      const baseT = baseline.responseTimeMs || 0;
+      if (timeMs >= 5000 && timeMs >= baseT + 4000) {
+        return {
+          finding: makeFinding({
+            type: 'cmd_injection', url, param, payload,
+            evidence: `Time-based command injection: response delayed ${timeMs}ms (baseline ${baseT}ms)`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 500), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
   }
 
   // ── SSTI ──
@@ -199,6 +260,41 @@ export function analyzeResponse(baseline, response, payloadMeta) {
           response: { statusCode: status, bodyExcerpt: '', responseTimeMs: timeMs },
         }),
       };
+    }
+  }
+
+  // ── SSRF (Server-Side Request Forgery) ──
+  // Confirm only with proof the target fetched an internal resource for us:
+  // cloud-metadata content or an internal service banner in the response body.
+  if (attackType === 'ssrf') {
+    for (const re of SSRF_METADATA_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'ssrf', url, param, payload,
+            evidence: `Cloud metadata reflected in response (server fetched internal endpoint): ${body.match(re)?.[0]?.slice(0, 80)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
+    for (const re of SSRF_INTERNAL_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'ssrf', url, param, payload,
+            evidence: `Internal service content reflected in response: ${body.match(re)?.[0]?.slice(0, 100)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
+    }
+    // Blind-SSRF signal: a large latency spike when pointing at an unreachable
+    // internal address (the server hangs trying to connect). Not proof on its
+    // own — surface as HIGH_INTEREST so it's visible without a false-positive.
+    const baseTime = baseline.responseTimeMs || 0;
+    if (baseTime > 0 && timeMs > baseTime + 5000 && status < 500) {
+      return { interest: 'HIGH', reason: `Possible blind SSRF: latency ${timeMs}ms vs baseline ${baseTime}ms (server may be fetching the supplied URL)` };
     }
   }
 
@@ -277,6 +373,25 @@ export function analyzeResponse(baseline, response, payloadMeta) {
           response: { statusCode: status, bodyExcerpt: body.slice(0, 500), responseTimeMs: timeMs },
         }),
       };
+    }
+  }
+
+  // ── HTTP 500 — stack trace / verbose error → info disclosure (active) ──
+  // A payload that triggers a 500 carrying a language stack trace leaks server
+  // internals (paths, framework, versions). Emit a confirmed info_disclosure
+  // finding when a trace is present; otherwise keep the 500 as a HIGH_INTEREST
+  // anomaly that drives the mutation engine.
+  if (status === 500 && baseline.status !== 500) {
+    for (const re of STACK_TRACE_PATTERNS) {
+      if (re.test(body)) {
+        return {
+          finding: makeFinding({
+            type: 'info_disclosure', subtype: 'stack_trace', url, param, payload,
+            evidence: `Payload triggered a server error exposing a stack trace: ${body.match(re)?.[0]?.slice(0, 120)}`,
+            response: { statusCode: status, bodyExcerpt: body.slice(0, 2000), responseTimeMs: timeMs },
+          }),
+        };
+      }
     }
   }
 

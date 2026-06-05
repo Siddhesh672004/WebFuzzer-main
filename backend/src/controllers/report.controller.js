@@ -13,11 +13,17 @@ async function getOrBuildReport(scanId, userId) {
   if (String(scan.userId) !== String(userId)) throw forbidden('Not your scan');
   if (scan.status !== 'completed') throw badRequest('Scan is not yet completed');
 
-  // Return cached report if available.
-  let report = await Report.findOne({ scanId: scan._id });
-  if (report) return { scan, report };
+  // Return the cached report only if it's still fresh. A report is stale when
+  // the scan's data changed after the report was last built (e.g. a verify-fix
+  // re-test, or a finding edit) — detected by comparing the scan's completion/
+  // update time against the report's reportBuiltAt. Otherwise rebuild in place.
+  const cached = await Report.findOne({ scanId: scan._id });
+  const scanChangedAt = scan.stats?.endTime || scan.updatedAt;
+  if (cached?.reportBuiltAt && scanChangedAt && cached.reportBuiltAt >= scanChangedAt) {
+    return { scan, report: cached };
+  }
 
-  // Build fresh.
+  // Build (or rebuild) fresh.
   const vulns = await Vulnerability.find({ scanId: scan._id }).lean();
   const priorScans = await Scan.find({
     userId: scan.userId,
@@ -37,26 +43,46 @@ async function getOrBuildReport(scanId, userId) {
   const json = buildReportJson(scan.toObject(), vulns, priorData);
   const html = buildReportHtml(json);
 
-  report = await Report.create({
-    scanId: scan._id,
-    userId: scan.userId,
-    targetUrl: scan.targetUrl,
-    targetDomain: scan.targetDomain,
-    scanNumber: scan.scanNumber,
-    summary: json.summary,
-    comparison: {
-      hasPreviousScans: json.comparison.hasPreviousScans,
-      fixed: json.comparison.fixed || 0,
-      newlyFound: json.comparison.newlyFound || 0,
-      persisting: json.comparison.persisting || 0,
-      regressed: json.comparison.regressed || 0,
+  // Upsert so a rebuild overwrites the stale cache rather than failing on the
+  // unique scanId index.
+  const report = await Report.findOneAndUpdate(
+    { scanId: scan._id },
+    {
+      $set: {
+        userId: scan.userId,
+        targetUrl: scan.targetUrl,
+        targetDomain: scan.targetDomain,
+        scanNumber: scan.scanNumber,
+        summary: json.summary,
+        comparison: {
+          hasPreviousScans: json.comparison.hasPreviousScans,
+          fixed: json.comparison.fixed || 0,
+          newlyFound: json.comparison.newlyFound || 0,
+          persisting: json.comparison.persisting || 0,
+          regressed: json.comparison.regressed || 0,
+        },
+        topFindings: json.topFindings || [],
+        jsonContent: json,
+        htmlContent: html,
+        reportBuiltAt: new Date(),
+      },
     },
-    jsonContent: json,
-    htmlContent: html,
-  });
+    { new: true, upsert: true, setDefaultsOnInsert: true },
+  );
 
   return { scan, report };
 }
+
+/** DELETE /api/reports/:scanId — drop the cached report so the next GET rebuilds. */
+export const deleteReport = asyncHandler(async (req, res) => {
+  const { scanId } = req.params;
+  if (!mongoose.isValidObjectId(scanId)) throw badRequest('Invalid scan id');
+  const scan = await Scan.findById(scanId);
+  if (!scan) throw notFound('Scan not found');
+  if (String(scan.userId) !== String(req.user.id)) throw forbidden('Not your scan');
+  const { deletedCount } = await Report.deleteOne({ scanId: scan._id });
+  res.json({ deleted: deletedCount > 0 });
+});
 
 export const getReport = asyncHandler(async (req, res) => {
   const { report } = await getOrBuildReport(req.params.scanId, req.user.id);

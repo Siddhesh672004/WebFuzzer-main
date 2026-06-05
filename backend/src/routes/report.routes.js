@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.middleware.js';
-import { getReport, getReportJson, getReportHtml, getReportCsv, getReportMarkdown, getReportPdf } from '../controllers/report.controller.js';
+import { getReport, getReportJson, getReportHtml, getReportCsv, getReportMarkdown, getReportPdf, deleteReport } from '../controllers/report.controller.js';
 
 const router = Router();
 
@@ -10,5 +10,6 @@ router.get('/reports/:scanId/html', requireAuth, getReportHtml);
 router.get('/reports/:scanId/csv', requireAuth, getReportCsv);
 router.get('/reports/:scanId/markdown', requireAuth, getReportMarkdown);
 router.get('/reports/:scanId/pdf', requireAuth, getReportPdf);
+router.delete('/reports/:scanId', requireAuth, deleteReport);
 
 export default router;

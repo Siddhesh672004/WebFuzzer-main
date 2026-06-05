@@ -24,6 +24,10 @@ const startSchema = z.object({
       maxDepth: z.coerce.number().int().min(0).max(10).optional(),
       rateLimit: z.coerce.number().int().min(1).max(100).optional(),
       maxEndpoints: z.coerce.number().int().min(1).max(2000).optional(),
+      // Intrusive default-credential probing — explicit opt-in.
+      aggressiveMode: z.boolean().optional(),
+      // Headless (browser) crawl for SPA/JS-rendered targets — opt-in.
+      headlessCrawl: z.boolean().optional(),
     })
     .optional(),
 });
@@ -60,6 +64,8 @@ export const createScan = asyncHandler(async (req, res) => {
       rateLimit: scanCfg?.rateLimit ?? config.SCAN_RATE_LIMIT,
       maxEndpoints: scanCfg?.maxEndpoints ?? config.SCAN_MAX_ENDPOINTS,
       allowPrivate: config.SCAN_ALLOW_PRIVATE,
+      aggressiveMode: scanCfg?.aggressiveMode ?? false,
+      headlessCrawl: scanCfg?.headlessCrawl ?? false,
     },
     consent: {
       authorized: true,

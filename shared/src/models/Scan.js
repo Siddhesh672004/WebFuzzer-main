@@ -7,6 +7,25 @@ import mongoose from 'mongoose';
 
 const MODULES = ['crawler', 'passive', 'exposed', 'fuzzer', 'auth', 'tech'];
 
+// Authenticated-crawl configuration. The login password is NEVER persisted on
+// the scan document — it travels only in the (transient) BullMQ job payload and
+// is discarded after the crawl run. Only non-secret material is stored here.
+const authSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ['none', 'cookie', 'headers', 'form_fill'], default: 'none' },
+    loginUrl: { type: String, default: '' },
+    usernameField: { type: String, default: '' },
+    passwordField: { type: String, default: '' },
+    username: { type: String, default: '' },
+    customCookies: {
+      type: [new mongoose.Schema({ name: String, value: String, domain: String }, { _id: false })],
+      default: [],
+    },
+    customHeaders: { type: mongoose.Schema.Types.Mixed, default: {} },
+  },
+  { _id: false },
+);
+
 const configSchema = new mongoose.Schema(
   {
     maxDepth: { type: Number, default: 3, min: 0, max: 10 },
@@ -15,6 +34,13 @@ const configSchema = new mongoose.Schema(
     concurrency: { type: Number, default: 5, min: 1, max: 20 },
     modules: { type: [String], enum: MODULES, default: MODULES },
     allowPrivate: { type: Boolean, default: false },
+    // Intrusive checks (default-credential POSTs, etc.) — off by default. The UI
+    // surfaces this as an explicit opt-in with a warning, since it sends real
+    // login attempts to the target.
+    aggressiveMode: { type: Boolean, default: false },
+    // Opt-in headless (browser) crawl for SPA / JS-rendered targets.
+    headlessCrawl: { type: Boolean, default: false },
+    auth: { type: authSchema, default: () => ({}) },
   },
   { _id: false },
 );
@@ -47,6 +73,9 @@ const statsSchema = new mongoose.Schema(
     low: { type: Number, default: 0 },
     informational: { type: Number, default: 0 },
     securityScore: { type: Number, default: 100, min: 0, max: 100 },
+    // Aggregate CVSS across this scan's findings (executive-summary headline).
+    maxCvssScore: { type: Number, default: 0, min: 0, max: 10 },
+    avgCvssScore: { type: Number, default: 0, min: 0, max: 10 },
     startTime: { type: Date },
     endTime: { type: Date },
     durationSeconds: { type: Number, default: 0 },

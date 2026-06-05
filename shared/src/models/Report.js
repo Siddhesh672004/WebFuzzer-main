@@ -39,6 +39,9 @@ const reportSchema = new mongoose.Schema(
     targetDomain: { type: String, required: true, lowercase: true, index: true },
     scanNumber: { type: Number, required: true },
     generatedAt: { type: Date, default: Date.now },
+    // When the cached artifacts were last (re)built. Compared against the scan's
+    // completion time to detect a stale cache and trigger a rebuild.
+    reportBuiltAt: { type: Date, default: Date.now },
     summary: { type: summarySchema, default: () => ({}) },
     comparison: { type: comparisonSchema, default: () => ({}) },
     // Top findings by severity for the executive summary (denormalized).

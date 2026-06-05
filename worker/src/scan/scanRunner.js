@@ -9,6 +9,7 @@ import { fingerprint } from '../engine/techFingerprinter.js';
 import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { testAuth } from '../engine/authTester.js';
 import { scanJsSecrets } from '../engine/jsSecretScanner.js';
+import { runActiveDetectors } from '../engine/activeScan.js';
 import { makeFinding } from '../engine/findingFactory.js';
 import { config } from '../config.js';
 import { childLogger } from '../logger.js';
@@ -26,7 +27,7 @@ const log = childLogger('scanRunner');
 
 // Module weights for the overall progress percentage. pct() normalizes by the
 // sum of active-module weights, so these need not total 100.
-const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5, jsSecrets: 10 };
+const MODULE_WEIGHT = { crawler: 25, passive: 15, exposed: 20, tech: 15, fuzzer: 20, auth: 5, jsSecrets: 10, active: 10 };
 
 // Live-feed / progress throttling. The activity buffer coalesces request-level
 // lines into one SSE frame at most every ACTIVITY_FLUSH_MS (or when it fills to
@@ -68,7 +69,7 @@ export class ScanRunner {
     this.cfg = deps.config || {};
     this.models = deps.models || { Scan, Endpoint, Vulnerability };
     this.publish = deps.publish || (() => {});
-    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech', 'fuzzer', 'auth', 'jsSecrets'];
+    this.modules = deps.modules || ['crawler', 'passive', 'exposed', 'tech', 'fuzzer', 'auth', 'jsSecrets', 'active'];
 
     const limiter = new RateLimiter(this.cfg.rateLimit || 10);
     this.http =
@@ -79,7 +80,7 @@ export class ScanRunner {
         onActivity: (info) => this.onHttpActivity(info),
       });
 
-    this.progress = { crawler: 0, passive: 0, exposed: 0, tech: 0, fuzzer: 0, auth: 0, jsSecrets: 0 };
+    this.progress = { crawler: 0, passive: 0, exposed: 0, tech: 0, fuzzer: 0, auth: 0, jsSecrets: 0, active: 0 };
     this.counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
     this.endpointCount = 0;
     this.vulnCount = 0;
@@ -362,7 +363,7 @@ export class ScanRunner {
   async runAuth() {
     this.setModule('auth', 'running');
     try {
-      const { findings } = await testAuth(this.targetUrl, this.http);
+      const { findings } = await testAuth(this.targetUrl, this.http, { aggressiveMode: this.cfg.aggressiveMode });
       await this.saveFindings(findings);
     } catch (err) {
       log.warn({ err: err.message }, 'auth tester failed');
@@ -417,6 +418,29 @@ export class ScanRunner {
     await this.pushProgress('jsSecrets');
   }
 
+  /**
+   * Active multi-request detectors (IDOR / JWT alg:none / session fixation).
+   * These can't be decided from a single response so they live outside the
+   * stateless responseAnalyzer; the orchestration is shared with the fan-out
+   * crawl handler via activeScan.js.
+   */
+  async runActive(endpoints = []) {
+    this.setModule('active', 'running');
+    try {
+      const findings = await runActiveDetectors(this.http, {
+        endpoints,
+        targetUrl: this.targetUrl,
+        aggressiveMode: this.cfg.aggressiveMode,
+      });
+      await this.saveFindings(findings);
+    } catch (err) {
+      log.warn({ err: err.message }, 'active detectors failed');
+    }
+    this.progress.active = 100;
+    this.setModule('active', 'completed');
+    await this.pushProgress('active');
+  }
+
   /** Run the full scan. Returns a summary. */
   async run() {
     this.startTime = new Date();
@@ -440,6 +464,7 @@ export class ScanRunner {
     if (this.modules.includes('fuzzer')) concurrentRunners.push(() => this.runFuzzer(crawledEndpoints));
     if (this.modules.includes('auth')) concurrentRunners.push(() => this.runAuth());
     if (this.modules.includes('jsSecrets')) concurrentRunners.push(() => this.runJsSecrets());
+    if (this.modules.includes('active')) concurrentRunners.push(() => this.runActive(crawledEndpoints));
 
     const results = await Promise.allSettled(concurrentRunners.map((fn) => fn()));
     results.filter((r) => r.status === 'rejected').forEach((r) => log.error({ err: r.reason?.message }, 'module failed'));

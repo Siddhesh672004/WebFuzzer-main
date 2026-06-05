@@ -7,6 +7,7 @@ import { fingerprint } from '../engine/techFingerprinter.js';
 import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { mutate } from '../engine/mutationEngine.js';
 import { testAuth } from '../engine/authTester.js';
+import { runActiveDetectors } from '../engine/activeScan.js';
 import { getScanContext, releaseScanContext } from './scanContext.js';
 import { initPending, trackJobDone } from './coordinator.js';
 import { enqueueJob, enqueueBulk } from '../queue/queues.js';
@@ -63,6 +64,20 @@ export function makeCrawlHandler({ publish, redis }) {
       log.error({ err: err.message, scanId }, 'crawl failed');
     }
     ctx.setModule('crawler', 'completed', `${endpoints.length} endpoints`);
+
+    // Active multi-request detectors (IDOR / JWT alg:none / session fixation).
+    // Run inline here (not a separate counted job) so the completion counter
+    // below stays simple; the same orchestration backs the monolithic path.
+    try {
+      const activeFindings = await runActiveDetectors(ctx.http, {
+        endpoints,
+        targetUrl,
+        aggressiveMode: config.aggressiveMode,
+      });
+      await ctx.saveFindings(activeFindings);
+    } catch (err) {
+      log.warn({ err: err.message, scanId }, 'active detectors failed');
+    }
 
     // Fan out Phase 2: passive, exposed, tech, auth (one each) + one fuzz job
     // per endpoint. Seed the counter with the exact number of jobs first so a
@@ -159,8 +174,10 @@ export function makeTechHandler(deps) {
 export function makeAuthHandler(deps) {
   return makePhase2Handler({
     ...deps, name: 'auth',
-    run: async (ctx) => {
-      const { findings } = await testAuth(ctx.targetUrl, ctx.http);
+    run: async (ctx, job) => {
+      const { findings } = await testAuth(ctx.targetUrl, ctx.http, {
+        aggressiveMode: job.data?.config?.aggressiveMode,
+      });
       await ctx.saveFindings(findings);
     },
   });

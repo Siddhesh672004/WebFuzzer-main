@@ -16,9 +16,12 @@ const DEFAULT_CREDENTIALS = [
  * Test authentication security on a target.
  * @param {string} targetUrl
  * @param {HttpClient} http
+ * @param {object} [opts]  { aggressiveMode } — gate intrusive default-credential
+ *   POSTs. Off by default: only the (non-intrusive) brute-force-protection probe
+ *   runs, so a non-consented/aggressive scan never submits real login attempts.
  * @returns {Promise<{findings: object[]}>}
  */
-export async function testAuth(targetUrl, http) {
+export async function testAuth(targetUrl, http, opts = {}) {
   const findings = [];
 
   // 1. Fetch the page and look for a login form.
@@ -28,14 +31,17 @@ export async function testAuth(targetUrl, http) {
   const hasLoginForm = /<input[^>]+type=["']?password["']?/i.test(res.body || '');
   if (!hasLoginForm) return { findings };
 
-  // 2. Brute-force rate-limit check — send 50 rapid requests.
+  // 2. Brute-force rate-limit check — send rapid requests, look for 429/403.
   const loginUrl = extractFormAction(res.body, targetUrl);
   const rateLimitFindings = await checkRateLimit(loginUrl, http);
   findings.push(...rateLimitFindings);
 
-  // 3. Default credentials.
-  const defaultCredFindings = await checkDefaultCredentials(loginUrl, http, res.body);
-  findings.push(...defaultCredFindings);
+  // 3. Default credentials — intrusive (submits real login attempts), so only
+  //    in aggressive mode.
+  if (opts.aggressiveMode) {
+    const defaultCredFindings = await checkDefaultCredentials(loginUrl, http, res.body);
+    findings.push(...defaultCredFindings);
+  }
 
   return { findings };
 }
