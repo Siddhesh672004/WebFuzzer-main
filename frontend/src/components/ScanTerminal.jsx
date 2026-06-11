@@ -7,7 +7,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 const TYPE_CLS = {
   info: 'text-fg-muted',
-  req: 'text-sky-400/70',
+  req: 'text-severity-low/80',
   found: 'text-accent',
   error: 'text-severity-critical',
   success: 'text-accent',
@@ -46,7 +46,7 @@ export function ScanTerminal({ logs = [], height = 280 }) {
         <span className="h-2.5 w-2.5 rounded-full bg-accent/70" />
         <span className="ml-2 font-mono text-[11px] text-fg-subtle">scan.log</span>
       </div>
-      <div ref={parentRef} onScroll={onScroll} className="overflow-auto bg-bg-inset px-3 py-2 font-mono text-xs leading-5" style={{ height }}>
+      <div ref={parentRef} onScroll={onScroll} className="crt overflow-auto bg-bg-inset px-3 py-2 font-mono text-xs leading-5" style={{ height }}>
         {logs.length === 0 ? (
           <div className="text-fg-subtle">
             <span className="terminal-cursor">waiting for output</span>

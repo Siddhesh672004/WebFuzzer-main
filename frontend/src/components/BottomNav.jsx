@@ -1,14 +1,15 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Search, Clock, FileText } from 'lucide-react';
+import { Home, Search, FileText, BarChart3 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useMediaQuery.jsx';
 
-// BottomNav — fixed bottom navigation, mobile only (<640px). Four destinations
-// with the active route highlighted in accent green.
+// BottomNav — fixed bottom navigation, mobile only (<640px). The active route is
+// highlighted in the phosphor accent.
 
 const ITEMS = [
   { to: '/dashboard', label: 'Home', Icon: Home },
   { to: '/scan/new', label: 'Scan', Icon: Search },
   { to: '/reports', label: 'Reports', Icon: FileText },
+  { to: '/benchmark', label: 'Benchmark', Icon: BarChart3 },
 ];
 
 export function BottomNav() {

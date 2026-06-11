@@ -85,7 +85,7 @@ export function ComparisonTable({ scans = [], rows = [], scoresByScan = {} }) {
                     const badge = STATUS_TO_BADGE[status];
                     return (
                       <td key={s.scanNumber} className="px-3 py-2 text-center">
-                        {badge ? <Badge status={badge.status} showIcon={false} /> : <span className="text-fg-subtle">—</span>}
+                        {badge ? <Badge status={badge.status} showIcon={false} /> : <span className="text-fg-subtle">-</span>}
                       </td>
                     );
                   })}
@@ -98,7 +98,7 @@ export function ComparisonTable({ scans = [], rows = [], scoresByScan = {} }) {
               <td className="sticky left-0 z-10 bg-bg-inset px-3 py-2 font-mono text-xs font-semibold text-fg">Security Score</td>
               {scans.map((s) => (
                 <td key={s.scanNumber} className="px-3 py-2 text-center font-mono text-xs font-semibold text-accent">
-                  {scoresByScan[s.scanNumber] ?? '—'}
+                  {scoresByScan[s.scanNumber] ?? '-'}
                 </td>
               ))}
             </tr>

@@ -7,7 +7,7 @@ import { Zap, Gauge, Radar } from 'lucide-react';
 export const SCAN_PRESETS = {
   quick: {
     id: 'quick', name: 'Quick', Icon: Zap, time: '1–2 min',
-    desc: 'A fast surface check. Crawls one level deep and runs the lightweight modules — good for a first look or re-checking a known site.',
+    desc: 'A fast surface check. Crawls one level deep and runs the lightweight modules. Good for a first look or re-checking a known site.',
     config: { maxDepth: 1, maxEndpoints: 50, rateLimit: 20 },
     includes: ['Shallow crawl (1 level)', 'Passive + exposed files', 'Top payloads only'],
   },
@@ -19,7 +19,7 @@ export const SCAN_PRESETS = {
   },
   deep: {
     id: 'deep', name: 'Deep', Icon: Radar, time: '30+ min',
-    desc: 'The exhaustive sweep. Crawls deeper, tests more endpoints, and fuzzes aggressively. Slowest — use when you want maximum coverage.',
+    desc: 'The exhaustive sweep. Crawls deeper, tests more endpoints, and fuzzes aggressively. Slowest, for maximum coverage.',
     config: { maxDepth: 5, maxEndpoints: 1000, rateLimit: 8 },
     includes: ['Exhaustive crawl (5 levels)', 'All modules', 'Extended payloads', 'Aggressive mutation'],
   },
@@ -36,10 +36,10 @@ export function ScanPresetSelector({ value = 'standard', onChange }) {
             key={preset.id}
             type="button"
             onClick={() => onChange?.(preset.id, preset)}
-            className={`flex flex-col rounded-lg border p-4 text-left transition-all ${
+            className={`pressable flex flex-col rounded-lg border p-4 text-left ${
               selected
-                ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(63,185,80,0.4)]'
-                : 'border-border bg-bg-subtle hover:border-border-muted'
+                ? 'border-accent bg-accent/5 shadow-glow'
+                : 'border-border bg-bg-subtle hover:border-accent/30'
             }`}
           >
             <div className="mb-2 flex items-center gap-2">
