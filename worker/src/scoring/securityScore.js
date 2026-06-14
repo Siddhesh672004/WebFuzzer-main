@@ -15,3 +15,18 @@ export function computeSecurityScore(counts = {}) {
   }
   return Math.max(0, score);
 }
+
+/**
+ * Aggregate CVSS headline stats for the executive summary.
+ * @param {Array<{cvssScore?: number}>} vulnerabilities
+ * @returns {{ maxCvssScore: number, avgCvssScore: number }}
+ */
+export function computeAggregateStats(vulnerabilities = []) {
+  const scores = vulnerabilities
+    .map((v) => (typeof v.cvssScore === 'number' ? v.cvssScore : 0))
+    .filter((s) => s > 0);
+  if (scores.length === 0) return { maxCvssScore: 0, avgCvssScore: 0 };
+  const max = Math.max(...scores);
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+  return { maxCvssScore: +max.toFixed(1), avgCvssScore: +avg.toFixed(1) };
+}

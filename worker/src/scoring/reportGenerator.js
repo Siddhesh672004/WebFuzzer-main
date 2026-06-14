@@ -1,4 +1,4 @@
-import { computeSecurityScore } from './securityScore.js';
+import { computeSecurityScore, computeAggregateStats } from './securityScore.js';
 import { getFixGuide } from '../knowledge/fixGuides.js';
 import { compareScans, comparisonSummary } from './comparison.js';
 
@@ -50,6 +50,21 @@ export function buildReportJson(scan, vulnerabilities, priorScans = []) {
     .slice(0, 3)
     .map((v) => ({ type: v.type, severity: v.severity, cvssScore: v.cvssScore, url: v.url, param: v.param }));
 
+  // Aggregate CVSS headline (P4.5) — prefer the scan's stored stats, else derive.
+  const aggregate = (scan.stats?.maxCvssScore || scan.stats?.avgCvssScore)
+    ? { maxCvssScore: scan.stats.maxCvssScore || 0, avgCvssScore: scan.stats.avgCvssScore || 0 }
+    : computeAggregateStats(vulnerabilities);
+
+  // Deduplication audit trail (P5.4) — raw payload firings collapsed into unique
+  // findings by the stable signature.
+  const rawFirings = scan.stats?.totalPayloadsSent || 0;
+  const deduplication = {
+    rawFirings,
+    uniqueFindings: vulnerabilities.length,
+    deduplicationRate: rawFirings > 0 ? `${((1 - vulnerabilities.length / rawFirings) * 100).toFixed(1)}%` : 'N/A',
+    signingAlgorithm: 'SHA-1(type:normalizedPath:param)',
+  };
+
   return {
     meta: {
       targetUrl: scan.targetUrl,
@@ -59,10 +74,42 @@ export function buildReportJson(scan, vulnerabilities, priorScans = []) {
       generatedAt: new Date().toISOString(),
       durationSeconds: scan.stats?.durationSeconds || 0,
     },
-    summary: { ...counts, securityScore, totalVulnerabilities: vulnerabilities.length },
+    summary: {
+      ...counts,
+      securityScore,
+      totalVulnerabilities: vulnerabilities.length,
+      maxCvssScore: aggregate.maxCvssScore,
+      avgCvssScore: aggregate.avgCvssScore,
+    },
+    authorization: buildConsentSection(scan),
+    deduplication,
     topFindings,
     vulnerabilities: enriched,
     comparison,
+  };
+}
+
+/** Authorization & legal-consent section (P5.1) — drawn from the scan's audit record. */
+function buildConsentSection(scan) {
+  const c = scan.consent || {};
+  return {
+    authorized: c.authorized !== false,
+    operatorEmail: scan.operatorEmail || 'Recorded',
+    confirmedAt: c.confirmedAt || null,
+    ip: c.ip || '',
+    userAgent: c.userAgent || '',
+    scanReference: String(scan._id || scan.id || ''),
+    statements: [
+      'I own this target, or I have written authorization from its owner to test it.',
+      'I understand this scan sends potentially malicious payloads to the target.',
+      'I accept full legal responsibility for the consequences of this assessment.',
+    ],
+    legalRefs: [
+      'Information Technology Act, 2000 (India) — Sections 43 & 66',
+      'Computer Fraud and Abuse Act (United States)',
+      'Computer Misuse Act 1990 (United Kingdom)',
+      'Council of Europe Convention on Cybercrime',
+    ],
   };
 }
 
@@ -97,7 +144,7 @@ function executiveSummary(score, counts, target, total) {
 
 /** Render a standalone professional HTML report (embedded CSS, no external deps). */
 export function buildReportHtml(reportJson) {
-  const { meta, summary, vulnerabilities, comparison } = reportJson;
+  const { meta, summary, vulnerabilities, comparison, authorization: auth, deduplication: dedup } = reportJson;
   const score = summary.securityScore;
   const byType = groupByType(vulnerabilities);
   const exec = executiveSummary(score, summary, meta.targetDomain || meta.targetUrl, summary.totalVulnerabilities);
@@ -127,6 +174,40 @@ export function buildReportHtml(reportJson) {
       </tr>`).join('');
 
   const findingPages = sorted.map((v) => renderFindingHtml(v)).join('');
+
+  const authSection = auth ? `
+  <section class="page">
+    <h1>Authorization &amp; Legal Consent</h1>
+    <p>This assessment was authorized before execution. SmartFuzz records an explicit authorization for every scan as an audit trail (IMPLEMENTATION_PLAN §10.3).</p>
+    <div class="kv">
+      <span class="k">Operator:</span><span class="v">${esc(auth.operatorEmail)}</span>
+      <span class="k">Authorized:</span><span class="v">${auth.authorized ? 'Yes' : 'No'}</span>
+      <span class="k">Confirmed at:</span><span class="v">${esc(auth.confirmedAt ? formatDate(auth.confirmedAt) : 'Recorded')}</span>
+      <span class="k">Source IP:</span><span class="v">${esc(auth.ip || 'n/a')}</span>
+      <span class="k">Scan reference:</span><span class="v">${esc(auth.scanReference)}</span>
+    </div>
+    <h2>Operator Confirmations</h2>
+    <ul class="steps">${auth.statements.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
+    <h2>Applicable Legal Frameworks</h2>
+    <ul class="steps">${auth.legalRefs.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
+  </section>` : '';
+
+  const disclaimerSection = `
+  <section class="page">
+    <h1>Disclaimer &amp; Methodology</h1>
+    <div class="warn">
+      <p><strong>This report was generated automatically by SmartFuzz.</strong> All findings should be reviewed and validated by a qualified security professional before remediation decisions are made. False positives may be present.</p>
+      <p style="margin-top:8px">SmartFuzz is intended for use only against systems you own or have explicit written permission to test. The operator bears full responsibility for authorized use.</p>
+    </div>
+    <h2>Finding Deduplication Audit</h2>
+    <p>Raw payload firings are collapsed into unique findings by a stable signature, so this report shows distinct issues rather than repeated detections of the same flaw.</p>
+    <div class="kv">
+      <span class="k">Raw payload firings:</span><span class="v">${dedup.rawFirings}</span>
+      <span class="k">Unique findings:</span><span class="v">${dedup.uniqueFindings}</span>
+      <span class="k">Deduplication rate:</span><span class="v">${esc(dedup.deduplicationRate)}</span>
+      <span class="k">Signature algorithm:</span><span class="v">${esc(dedup.signingAlgorithm)}</span>
+    </div>
+  </section>`;
 
   const compSection = comparison.hasPreviousScans ? `
   <section class="page">
@@ -232,6 +313,8 @@ export function buildReportHtml(reportJson) {
   <div class="confidential">⚠ CONFIDENTIAL — Contains sensitive security information. Limit distribution to authorized personnel. Generated by SmartFuzz on ${esc(formatDate(meta.generatedAt))}.</div>
 </div>
 
+${authSection}
+
 <section class="page">
   <h1>1. Executive Summary</h1>
   <div class="exec-box">${esc(exec)}</div>
@@ -242,7 +325,7 @@ export function buildReportHtml(reportJson) {
     <div style="flex:1"><div class="score-bar"><div class="score-fill"></div></div></div>
     <div style="font-size:24px;font-weight:700;min-width:72px;text-align:right">${score}/100</div>
   </div>
-  <p style="font-size:13px">Score = 100 − Σ(severity penalty). 90+ is low risk.</p>
+  <p style="font-size:13px">Score = 100 − Σ(severity penalty). 90+ is low risk. &nbsp;|&nbsp; Highest CVSS: <strong>${(summary.maxCvssScore ?? 0).toFixed(1)}</strong> &nbsp;·&nbsp; Average CVSS: <strong>${(summary.avgCvssScore ?? 0).toFixed(1)}</strong></p>
   ${byType.length ? `<h2>Findings by Type</h2>
   <table class="vuln-table"><thead><tr><th>Vulnerability Type</th><th>Count</th><th>Highest Severity</th></tr></thead><tbody>${byTypeRows}</tbody></table>` : ''}
 </section>
@@ -255,6 +338,7 @@ export function buildReportHtml(reportJson) {
 
 ${findingPages}
 ${compSection}
+${disclaimerSection}
 
 <section class="page">
   <h1>${comparison.hasPreviousScans ? '4' : '3'}. Remediation Guidance</h1>
@@ -332,6 +416,7 @@ export function buildReportMarkdown(reportJson) {
     ``,
     `**Target:** ${meta.targetUrl}  `,
     `**Score:** ${summary.securityScore}/100  `,
+    `**Highest CVSS:** ${(summary.maxCvssScore ?? 0).toFixed(1)} &nbsp; **Average CVSS:** ${(summary.avgCvssScore ?? 0).toFixed(1)}  `,
     `**Generated:** ${meta.generatedAt}`,
     ``,
     `## Summary`,
@@ -368,7 +453,7 @@ function formatDate(d) {
  */
 export async function buildReportPdf(reportJson) {
   const PDFDocument = (await import('pdfkit')).default;
-  const { meta, summary, vulnerabilities } = reportJson;
+  const { meta, summary, vulnerabilities, authorization: auth, deduplication: dedup } = reportJson;
   const score = summary.securityScore;
   const sorted = [...vulnerabilities].sort((a, b) => (b.cvssScore || 0) - (a.cvssScore || 0));
 
@@ -419,6 +504,7 @@ export async function buildReportPdf(reportJson) {
     }
     doc.moveDown(0.5);
     doc.fontSize(10).fillColor('#6b7280').text(`Total findings: ${summary.totalVulnerabilities}`);
+    doc.fontSize(10).fillColor('#6b7280').text(`Highest CVSS: ${(summary.maxCvssScore ?? 0).toFixed(1)}   ·   Average CVSS: ${(summary.avgCvssScore ?? 0).toFixed(1)}`);
 
     // ── Findings table ──
     doc.moveDown(1.2);
@@ -498,6 +584,45 @@ export async function buildReportPdf(reportJson) {
         doc.fontSize(8).fillColor('#6b7280').text(`📸 Screenshot evidence captured (${v.screenshotFile}) — view in SmartFuzz.`);
       }
     }
+
+    // ── Authorization & legal consent (P5.1) ──
+    if (auth) {
+      doc.addPage();
+      doc.fontSize(20).fillColor('#0a0a0f').text('Authorization & Legal Consent');
+      doc.moveTo(50, doc.y + 2).lineTo(545, doc.y + 2).strokeColor('#3FB950').lineWidth(2).stroke();
+      doc.moveDown(0.8);
+      const ck = (k, v) => doc.fontSize(10).fillColor('#6b7280').text(`${k}: `, { continued: true }).fillColor('#1a202c').text(String(v ?? 'n/a'));
+      ck('Operator', auth.operatorEmail);
+      ck('Authorized', auth.authorized ? 'Yes' : 'No');
+      ck('Confirmed at', auth.confirmedAt ? formatDate(auth.confirmedAt) : 'Recorded');
+      ck('Source IP', auth.ip || 'n/a');
+      ck('Scan reference', auth.scanReference);
+      doc.moveDown(0.6);
+      doc.fontSize(12).fillColor('#0a0a0f').text('Operator Confirmations');
+      doc.fontSize(9).fillColor('#1a202c');
+      auth.statements.forEach((s) => doc.text(`• ${s}`, { width: 480 }));
+      doc.moveDown(0.4);
+      doc.fontSize(12).fillColor('#0a0a0f').text('Applicable Legal Frameworks');
+      doc.fontSize(9).fillColor('#1a202c');
+      auth.legalRefs.forEach((s) => doc.text(`• ${s}`, { width: 480 }));
+    }
+
+    // ── Disclaimer & deduplication audit (P5.2 / P5.4) ──
+    doc.addPage();
+    doc.fontSize(20).fillColor('#0a0a0f').text('Disclaimer & Methodology');
+    doc.moveTo(50, doc.y + 2).lineTo(545, doc.y + 2).strokeColor('#3FB950').lineWidth(2).stroke();
+    doc.moveDown(0.8);
+    doc.fontSize(10).fillColor('#1a202c').text(
+      'This report was generated automatically by SmartFuzz. All findings should be reviewed and validated by a qualified security professional before remediation decisions are made. False positives may be present. SmartFuzz is intended for use only against systems you own or have explicit written permission to test.',
+      { width: 495 },
+    );
+    doc.moveDown(0.8);
+    doc.fontSize(12).fillColor('#0a0a0f').text('Finding Deduplication Audit');
+    doc.fontSize(9).fillColor('#1a202c');
+    doc.text(`Raw payload firings: ${dedup.rawFirings}`);
+    doc.text(`Unique findings: ${dedup.uniqueFindings}`);
+    doc.text(`Deduplication rate: ${dedup.deduplicationRate}`);
+    doc.text(`Signature algorithm: ${dedup.signingAlgorithm}`);
 
     // ── Footer on every page ──
     const range = doc.bufferedPageRange();

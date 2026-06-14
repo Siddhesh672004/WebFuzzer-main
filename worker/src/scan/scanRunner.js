@@ -10,6 +10,9 @@ import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { testAuth } from '../engine/authTester.js';
 import { scanJsSecrets } from '../engine/jsSecretScanner.js';
 import { runActiveDetectors } from '../engine/activeScan.js';
+import { buildAuthHeaders, cookiesToHeader } from '../engine/authContext.js';
+import { analyzeResponse } from '../engine/responseAnalyzer.js';
+import { generateAiPayloads } from '../engine/aiPayloadGenerator.js';
 import { makeFinding } from '../engine/findingFactory.js';
 import { config } from '../config.js';
 import { childLogger } from '../logger.js';
@@ -77,6 +80,7 @@ export class ScanRunner {
       new HttpClient({
         rateLimiter: limiter,
         allowPrivate: this.cfg.allowPrivate,
+        defaultHeaders: buildAuthHeaders(this.cfg.auth || {}),
         onActivity: (info) => this.onHttpActivity(info),
       });
 
@@ -84,6 +88,8 @@ export class ScanRunner {
     this.counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
     this.endpointCount = 0;
     this.vulnCount = 0;
+    this.maxCvss = 0;
+    this.sumCvss = 0;
     this.payloadsSent = 0;
     this.jsUrls = [];
     this.startTime = null;
@@ -197,6 +203,8 @@ export class ScanRunner {
         if (res.upsertedCount > 0) {
           this.vulnCount += 1;
           this.counts[f.severity] = (this.counts[f.severity] || 0) + 1;
+          this.maxCvss = Math.max(this.maxCvss, f.cvssScore || 0);
+          this.sumCvss += f.cvssScore || 0;
           this.emit(SSE_EVENTS.FINDING, { type: f.type, severity: f.severity, cvssScore: f.cvssScore, url: f.url, param: f.param });
           // Screenshot evidence — only for visually-demonstrable vuln types, only
           // when enabled, and strictly non-blocking so capture never delays or
@@ -248,16 +256,7 @@ export class ScanRunner {
 
   async runCrawler() {
     this.setModule('crawler', 'running');
-    const result = await crawl(this.targetUrl, this.http, {
-      maxDepth: this.cfg.maxDepth ?? 3,
-      maxEndpoints: this.cfg.maxEndpoints ?? 500,
-      onProgress: ({ endpointsDiscovered, url }) => {
-        this.endpointCount = endpointsDiscovered;
-        this.progress.crawler = Math.min(90, endpointsDiscovered);
-        if (url) this.activity(`crawler found ${shortPath(url)}`, 'info');
-        this.maybePushProgress('crawler');
-      },
-    });
+    const result = await this.doCrawl();
     // Persist endpoints.
     for (const e of result.endpoints) {
       // eslint-disable-next-line no-await-in-loop
@@ -274,6 +273,51 @@ export class ScanRunner {
     this.setModule('crawler', 'completed');
     await this.pushProgress('crawler');
     return result.endpoints;
+  }
+
+  /**
+   * Run the crawl, using the opt-in headless (browser) crawler when enabled, and
+   * falling back to the static cheerio crawler on failure or an empty result so
+   * a scan never stalls. Post-login session cookies from a form-fill auth crawl
+   * are propagated to the shared client so every later module crawls authed too.
+   */
+  async doCrawl() {
+    const useHeadless = this.cfg.headlessCrawl || config.SCAN_HEADLESS_CRAWLER;
+    if (useHeadless) {
+      try {
+        const { crawlHeadless } = await import('../engine/headlessCrawler.js');
+        const result = await crawlHeadless(this.targetUrl, {
+          maxPages: this.cfg.maxEndpoints ?? config.HEADLESS_MAX_PAGES,
+          maxDepth: this.cfg.maxDepth ?? 3,
+          timeoutMs: config.HEADLESS_TIMEOUT_MS,
+          allowPrivate: this.cfg.allowPrivate,
+          auth: this.cfg.auth || {},
+        });
+        if (result?.cookies?.length) {
+          const cookieHeader = cookiesToHeader(result.cookies);
+          if (cookieHeader) this.http.setDefaultHeaders({ Cookie: cookieHeader });
+        }
+        if ((result?.endpoints?.length ?? 0) > 0) {
+          this.activity(`headless crawler: ${result.endpoints.length} endpoints across ${result.pagesVisited} pages`, 'info');
+          this.progress.crawler = 90;
+          return result;
+        }
+        this.activity('headless crawler found nothing — falling back to static crawl', 'info');
+      } catch (err) {
+        log.warn({ err: err.message }, 'headless crawl failed — falling back to static crawler');
+        this.activity('headless crawl failed — falling back to static crawl', 'error');
+      }
+    }
+    return crawl(this.targetUrl, this.http, {
+      maxDepth: this.cfg.maxDepth ?? 3,
+      maxEndpoints: this.cfg.maxEndpoints ?? 500,
+      onProgress: ({ endpointsDiscovered, url }) => {
+        this.endpointCount = endpointsDiscovered;
+        this.progress.crawler = Math.min(90, endpointsDiscovered);
+        if (url) this.activity(`crawler found ${shortPath(url)}`, 'info');
+        this.maybePushProgress('crawler');
+      },
+    });
   }
 
   async runPassive() {
@@ -441,6 +485,61 @@ export class ScanRunner {
     await this.pushProgress('active');
   }
 
+  /**
+   * Adaptive AI second pass (P3.2). For each confirmed critical/high finding,
+   * ask the AI generator for escalation variants and re-fire them at the same
+   * location; a re-confirmation strengthens the finding (refinedEvidence). This
+   * is a deliberate no-op when AI is disabled — the inline mutation engine
+   * already covers rule-based refinement during the main fuzz pass.
+   */
+  async runRefinement() {
+    if (config.AI_PAYLOAD_MODE === 'off') return;
+    this.setModule('refine', 'running');
+    try {
+      const targets = await this.models.Vulnerability.find({
+        scanId: this.scanId,
+        severity: { $in: ['critical', 'high'] },
+        isMutation: { $ne: true },
+      }).limit(10).lean();
+
+      for (const v of targets) {
+        if (!v.param || !v.url || v.param === 'xml_body') continue;
+        // eslint-disable-next-line no-await-in-loop
+        const aiValues = await generateAiPayloads(
+          v.type, v.param,
+          `Confirmed ${v.type} on ${v.url}. Original payload: ${v.payload}. Generate escalation/bypass variants.`,
+        );
+        for (const value of aiValues.slice(0, 4)) {
+          let testUrl;
+          try {
+            const u = new URL(v.url);
+            u.searchParams.set(v.param, value);
+            testUrl = u.toString();
+          } catch { continue; }
+          // eslint-disable-next-line no-await-in-loop
+          const res = await this.http.get(testUrl);
+          const result = analyzeResponse(
+            { status: res.status, bodyLength: 0, responseTimeMs: 100 },
+            { status: res.status, headers: res.headers, body: res.body, responseTimeMs: res.timeMs, finalUrl: res.finalUrl },
+            { attackType: v.type, value, url: v.url, param: v.param },
+          );
+          if (result?.finding) {
+            this.activity(`refinement confirmed ${v.type} on ${shortPath(v.url)} via AI variant`, 'info');
+            // eslint-disable-next-line no-await-in-loop
+            await this.models.Vulnerability.updateOne(
+              { _id: v._id },
+              { $set: { refinedEvidence: `AI escalation re-confirmed: ${result.finding.evidence}`.slice(0, 500) } },
+            ).catch(() => {});
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      log.warn({ err: err.message }, 'refinement pass failed');
+    }
+    this.setModule('refine', 'completed');
+  }
+
   /** Run the full scan. Returns a summary. */
   async run() {
     this.startTime = new Date();
@@ -469,6 +568,9 @@ export class ScanRunner {
     const results = await Promise.allSettled(concurrentRunners.map((fn) => fn()));
     results.filter((r) => r.status === 'rejected').forEach((r) => log.error({ err: r.reason?.message }, 'module failed'));
 
+    // Adaptive AI second pass (no-op unless AI payload generation is enabled).
+    await this.runRefinement().catch((err) => log.warn({ err: err.message }, 'refinement failed'));
+
     const status = 'completed';
     const endTime = new Date();
     const durationSeconds = Math.max(0, Math.round((endTime - this.startTime) / 1000));
@@ -483,6 +585,8 @@ export class ScanRunner {
           'stats.totalEndpoints': this.endpointCount,
           'stats.totalPayloadsSent': this.payloadsSent,
           'stats.totalVulnerabilities': this.vulnCount,
+          'stats.maxCvssScore': +this.maxCvss.toFixed(1),
+          'stats.avgCvssScore': this.vulnCount > 0 ? +(this.sumCvss / this.vulnCount).toFixed(1) : 0,
           'stats.critical': this.counts.critical || 0,
           'stats.high': this.counts.high || 0,
           'stats.medium': this.counts.medium || 0,
