@@ -66,6 +66,10 @@ export const CVE_DATABASE = {
   flask: [
     { maxVersion: '2.2.4', cve: 'CVE-2023-30861', cvss: 7.5, desc: 'Flask cookie disclosure via response caching with Werkzeug', patchVersion: '2.2.5' },
   ],
+  rails: [
+    { maxVersion: '5.2.2', cve: 'CVE-2019-5418', cvss: 7.5, desc: 'Rails Action View file content disclosure via crafted Accept header', patchVersion: '5.2.2.1' },
+    { maxVersion: '7.0.3', cve: 'CVE-2022-32224', cvss: 9.8, desc: 'Rails Active Record RCE via YAML deserialization of serialized columns', patchVersion: '7.0.3.1' },
+  ],
   express: [
     { maxVersion: '4.19.1', cve: 'CVE-2024-29041', cvss: 6.1, desc: 'Express open redirect via malformed URLs in res.location', patchVersion: '4.19.2' },
     { maxVersion: '4.17.2', cve: 'CVE-2022-24999', cvss: 7.5, desc: 'Express qs prototype pollution / DoS', patchVersion: '4.17.3' },
