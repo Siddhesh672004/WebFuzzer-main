@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import { BottomNav } from './components/BottomNav.jsx';
 
+const Landing = lazy(() => import('./pages/Landing.jsx'));
 const Verify = lazy(() => import('./pages/Verify.jsx'));
 const Dashboard = lazy(() => import('./pages/Dashboard.jsx'));
 const NewScan = lazy(() => import('./pages/NewScan.jsx'));
@@ -11,6 +12,7 @@ const ScanResults = lazy(() => import('./pages/ScanResults.jsx'));
 const Comparison = lazy(() => import('./pages/Comparison.jsx'));
 const Reports = lazy(() => import('./pages/Reports.jsx'));
 const FixGuide = lazy(() => import('./pages/FixGuide.jsx'));
+const Benchmark = lazy(() => import('./pages/Benchmark.jsx'));
 
 function PageFallback() {
   return (
@@ -41,8 +43,9 @@ export default function App() {
         <Route path="/fix/:scanId/:vulnId" element={<Protected><FixGuide /></Protected>} />
         <Route path="/compare/:domain" element={<Protected><Comparison /></Protected>} />
         <Route path="/reports" element={<Protected><Reports /></Protected>} />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/benchmark" element={<Protected><Benchmark /></Protected>} />
+        <Route path="/" element={<Landing />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   );
