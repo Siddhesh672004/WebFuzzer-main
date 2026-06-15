@@ -1,17 +1,19 @@
 // Small, theme-consistent UI primitives. Kept minimal and dependency-free so
 // every page shares the same look without re-declaring Tailwind class soup.
+// Interaction physics live in index.css (.pressable / .btn-*): scale(0.97) on
+// press, 160ms ease-out, hover states gated to real pointers.
 
 export function Button({ children, variant = 'primary', loading = false, className = '', disabled, ...props }) {
-  const base =
-    'inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 font-mono text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50';
+  const base = 'px-4 py-2.5 font-mono text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50';
   const variants = {
-    primary: 'bg-accent-dim text-white hover:bg-accent-glow',
-    ghost: 'border border-border text-fg hover:bg-bg-subtle',
-    danger: 'bg-severity-critical/90 text-white hover:bg-severity-critical',
+    // Phosphor accent with near-black text; the glow appears on hover only.
+    primary: 'btn-primary',
+    ghost: 'btn-ghost',
+    danger: 'btn pressable bg-severity-critical/90 text-white hover:bg-severity-critical',
   };
   return (
     <button
-      className={`${base} ${variants[variant] || variants.primary} ${className}`}
+      className={`${variants[variant] || variants.primary} ${base} ${className}`}
       disabled={disabled || loading}
       {...props}
     >
@@ -36,8 +38,8 @@ export function Input({ label, error, className = '', id, ...props }) {
       )}
       <input
         id={id}
-        className={`w-full rounded-md border bg-bg-inset px-3 py-2.5 font-mono text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent/40 ${
-          error ? 'border-severity-critical' : 'border-border'
+        className={`w-full rounded-md border bg-bg-inset px-3 py-2.5 font-mono text-fg placeholder:text-fg-subtle transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-accent/40 ${
+          error ? 'border-severity-critical' : 'border-border focus:border-accent/50'
         } ${className}`}
         aria-invalid={!!error}
         {...props}
@@ -55,7 +57,7 @@ export function Alert({ children, variant = 'info' }) {
     warn: 'border-severity-medium/40 bg-severity-medium/10 text-severity-medium',
   };
   return (
-    <div className={`rounded-md border px-3 py-2.5 font-mono text-sm ${variants[variant] || variants.info}`} role="alert">
+    <div className={`animate-slide-up rounded-md border px-3 py-2.5 font-mono text-sm ${variants[variant] || variants.info}`} role="alert">
       {children}
     </div>
   );
