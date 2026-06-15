@@ -1,5 +1,6 @@
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { TrendingUp, TrendingDown } from 'lucide-react';
+import { PALETTE, SEVERITY_HEX } from '../lib/palette.js';
 
 // SecurityScoreChart — score trend across a target's scans (recharts LineChart).
 // Dark themed; shows an improvement/decline badge comparing latest vs first.
@@ -49,18 +50,18 @@ export function SecurityScoreChart({ history = [], height = 220 }) {
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#21262D" />
-          <XAxis dataKey="label" stroke="#6E7681" tick={{ fontSize: 11, fontFamily: 'monospace' }} />
-          <YAxis domain={[0, 100]} stroke="#6E7681" tick={{ fontSize: 11, fontFamily: 'monospace' }} />
+          <CartesianGrid strokeDasharray="3 3" stroke={PALETTE.border} />
+          <XAxis dataKey="label" stroke={PALETTE.fgSubtle} tick={{ fontSize: 11, fontFamily: 'monospace' }} />
+          <YAxis domain={[0, 100]} stroke={PALETTE.fgSubtle} tick={{ fontSize: 11, fontFamily: 'monospace' }} />
           <RTooltip content={<ChartTooltip />} />
-          <ReferenceLine y={90} stroke="#3FB950" strokeDasharray="2 4" strokeOpacity={0.4} />
-          <ReferenceLine y={40} stroke="#F85149" strokeDasharray="2 4" strokeOpacity={0.4} />
+          <ReferenceLine y={90} stroke={PALETTE.accentDim} strokeDasharray="2 4" strokeOpacity={0.5} />
+          <ReferenceLine y={40} stroke={SEVERITY_HEX.critical} strokeDasharray="2 4" strokeOpacity={0.5} />
           <Line
             type="monotone"
             dataKey="score"
-            stroke="#3FB950"
+            stroke={PALETTE.accent}
             strokeWidth={2}
-            dot={{ r: 4, fill: '#3FB950', strokeWidth: 0 }}
+            dot={{ r: 4, fill: PALETTE.accent, strokeWidth: 0 }}
             activeDot={{ r: 6 }}
             isAnimationActive
           />
