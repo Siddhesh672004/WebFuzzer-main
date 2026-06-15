@@ -76,8 +76,8 @@ export default function Verify() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="card w-full max-w-md p-8">
+    <main className="grid-bg flex min-h-screen items-center justify-center bg-bg px-4">
+      <div className="card w-full max-w-md p-8 shadow-panel animate-scale-in">
         <div className="mb-6 flex items-center gap-3">
           <Shield className="h-8 w-8 text-accent" aria-hidden="true" />
           <h1 className="font-mono text-2xl font-bold text-fg">
