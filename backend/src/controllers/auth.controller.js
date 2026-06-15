@@ -35,17 +35,19 @@ export const sendOtp = asyncHandler(async (req, res) => {
   }
 
   const code = await createOtp(email);
-  const { previewUrl } = await sendOtpEmail(email, code);
+  const { previewUrl, devFallback } = await sendOtpEmail(email, code);
   log.info({ email }, 'OTP sent');
 
   const body = {
     message: 'If that email is valid, a verification code has been sent.',
     expiresInSeconds: config.OTP_TTL_SECONDS,
   };
-  // Dev-only conveniences (never in production).
+  // Dev-only conveniences (never in production). devFallback means the real
+  // transport failed and the mailer degraded to JSON — surface the code so
+  // login still works.
   if (!isProd()) {
     if (previewUrl) body.previewUrl = previewUrl;
-    if (config.MAIL_TRANSPORT === 'json') body.devOtp = code;
+    if (config.MAIL_TRANSPORT === 'json' || devFallback) body.devOtp = code;
   }
   res.json(body);
 });

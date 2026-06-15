@@ -48,6 +48,11 @@ const schema = z.object({
 
   WORKER_FUZZ_CONCURRENCY: z.coerce.number().int().positive().default(5),
 
+  // Demo mode — pre-fills the New Scan page with an authorized public test
+  // target and shows a banner. Surfaced to the frontend via GET /api/meta.
+  SMARTFUZZ_DEMO_MODE: boolish(false),
+  SMARTFUZZ_DEMO_TARGET: z.string().default('http://testphp.vulnweb.com'),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
