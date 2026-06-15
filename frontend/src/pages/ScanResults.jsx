@@ -142,6 +142,13 @@ export default function ScanResults() {
                 return <Badge key={sev} severity={sev} label={`${count} ${sev}`} />;
               })}
             </div>
+            {scan?.stats?.maxCvssScore > 0 && (
+              <p className="mt-3 font-mono text-xs text-fg-subtle">
+                Max CVSS <span className="text-fg">{scan.stats.maxCvssScore.toFixed(1)}</span>
+                <span className="mx-2 text-border">|</span>
+                Avg CVSS <span className="text-fg">{scan.stats.avgCvssScore.toFixed(1)}</span>
+              </p>
+            )}
           </div>
           <SecurityScoreGauge score={score} />
         </div>
@@ -208,7 +215,7 @@ export default function ScanResults() {
             {/* Findings */}
             {filtered.length === 0 ? (
               vulns.length === 0 ? (
-                <Alert variant="success">✅ No vulnerabilities detected. This target passed all checks.</Alert>
+                <Alert variant="success">No vulnerabilities detected. This target passed all checks.</Alert>
               ) : (
                 <div className="card p-6 text-center font-mono text-sm text-fg-subtle">No findings match these filters.</div>
               )
