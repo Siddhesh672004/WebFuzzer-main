@@ -1,12 +1,15 @@
 import { useNavigate } from 'react-router-dom';
-import { Shield, LogOut, Plus, Activity, Target, Clock } from 'lucide-react';
+import { Shield, LogOut, Plus, Activity, BarChart3 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth, useLogout } from '../hooks/useAuth.js';
 import { scanApi } from '../api/scans.js';
 import { Button } from '../components/ui.jsx';
+import { SEVERITY_HEX, STATUS_HEX } from '../lib/palette.js';
 
-const SEV_COLOR = { critical: '#F85149', high: '#F78166', medium: '#D29922', low: '#58A6FF', informational: '#8B949E' };
-const STATUS_COLOR = { pending: '#8B949E', running: '#D29922', completed: '#3FB950', failed: '#F85149', cancelled: '#8B949E' };
+// Hex mirrors of the OKLCH severity/status tokens (see lib/palette.js):
+// running pulses phosphor green, completed settles dim green.
+const SEV_COLOR = SEVERITY_HEX;
+const STATUS_COLOR = STATUS_HEX;
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -37,8 +40,12 @@ export default function Dashboard() {
               Smart<span className="text-accent">Fuzz</span>
             </span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <span className="hidden font-mono text-xs text-fg-muted sm:inline">{user?.email}</span>
+            <Button variant="ghost" onClick={() => navigate('/benchmark')}>
+              <BarChart3 className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Benchmark</span>
+            </Button>
             <Button variant="ghost" onClick={handleLogout} loading={logout.isPending}>
               <LogOut className="h-4 w-4" aria-hidden="true" />
               <span className="hidden sm:inline">Logout</span>
@@ -47,10 +54,10 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-8 flex items-center justify-between">
+      <main className="mx-auto max-w-6xl px-4 py-8 animate-slide-up">
+        <div className="mb-8 flex items-end justify-between gap-4">
           <div>
-            <h1 className="font-mono text-2xl font-bold text-fg">Dashboard</h1>
+            <h1 className="font-display text-3xl tracking-tightest text-fg sm:text-4xl">Dashboard</h1>
             <p className="mt-1 font-mono text-sm text-fg-muted">
               <span className="text-accent">$</span> {runningScans.length > 0 ? `${runningScans.length} scan(s) running` : 'ready to scan'}
               <span className="terminal-cursor" />
@@ -58,24 +65,21 @@ export default function Dashboard() {
           </div>
           <Button onClick={() => navigate('/scan/new')}>
             <Plus className="h-4 w-4" aria-hidden="true" />
-            New Scan
+            New scan
           </Button>
         </div>
 
-        {/* Stats row */}
-        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {/* Stat bar — one panel, segmented, instead of four identical cards. */}
+        <div className="mb-8 grid grid-cols-2 divide-y divide-border rounded-xl border border-border bg-bg-subtle sm:grid-cols-4 sm:divide-x sm:divide-y-0">
           {[
-            { label: 'Total Scans', value: data?.total ?? 0, icon: Target },
-            { label: 'Running', value: runningScans.length, icon: Activity },
-            { label: 'Completed', value: scans.filter((s) => s.status === 'completed').length, icon: Shield },
-            { label: 'Targets', value: new Set(scans.map((s) => s.targetDomain)).size, icon: Clock },
-          ].map(({ label, value, icon: Icon }) => (
-            <div key={label} className="card p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Icon className="h-4 w-4 text-fg-subtle" />
-                <span className="font-mono text-xs text-fg-muted">{label}</span>
-              </div>
-              <div className="font-mono text-2xl font-bold text-fg">{value}</div>
+            { label: 'Total scans', value: data?.total ?? 0 },
+            { label: 'Running', value: runningScans.length },
+            { label: 'Completed', value: scans.filter((s) => s.status === 'completed').length },
+            { label: 'Targets', value: new Set(scans.map((s) => s.targetDomain)).size },
+          ].map(({ label, value }) => (
+            <div key={label} className="px-5 py-4">
+              <div className="font-mono text-3xl text-fg">{value}</div>
+              <div className="mt-1 text-[13px] uppercase tracking-wide text-fg-subtle">{label}</div>
             </div>
           ))}
         </div>
@@ -118,7 +122,7 @@ export default function Dashboard() {
                     )}
                     <span
                       className="font-mono text-xs font-bold capitalize"
-                      style={{ color: STATUS_COLOR[s.status] || '#8B949E' }}
+                      style={{ color: STATUS_COLOR[s.status] || STATUS_COLOR.pending }}
                     >
                       {s.status}
                     </span>
