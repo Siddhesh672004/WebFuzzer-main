@@ -28,6 +28,22 @@ const startSchema = z.object({
       aggressiveMode: z.boolean().optional(),
       // Headless (browser) crawl for SPA/JS-rendered targets — opt-in.
       headlessCrawl: z.boolean().optional(),
+      // Authenticated-crawl config. `password` (form_fill) is accepted here but
+      // NEVER persisted — it travels only in the transient scan job payload.
+      auth: z
+        .object({
+          type: z.enum(['none', 'cookie', 'headers', 'form_fill']).optional(),
+          loginUrl: z.string().optional(),
+          usernameField: z.string().optional(),
+          passwordField: z.string().optional(),
+          username: z.string().optional(),
+          password: z.string().optional(),
+          customCookies: z
+            .array(z.object({ name: z.string(), value: z.string(), domain: z.string().optional() }))
+            .optional(),
+          customHeaders: z.record(z.string()).optional(),
+        })
+        .optional(),
     })
     .optional(),
 });
@@ -43,6 +59,12 @@ export const createScan = asyncHandler(async (req, res) => {
   const { targetUrl, config: scanCfg } = startSchema.parse(req.body);
   const { origin, domain } = deriveOrigin(targetUrl);
   const userId = req.user.id;
+
+  // Split the login password out of the auth config: it is used transiently by
+  // the worker (form-fill login) but is NEVER persisted to MongoDB.
+  const authInput = scanCfg?.auth || {};
+  const { password: authPassword, ...authStored } = authInput;
+  const hasAuth = authStored.type && authStored.type !== 'none';
 
   // Find-or-create the target and atomically bump its scan counter → scanNumber.
   const target = await Target.findOneAndUpdate(
@@ -66,6 +88,7 @@ export const createScan = asyncHandler(async (req, res) => {
       allowPrivate: config.SCAN_ALLOW_PRIVATE,
       aggressiveMode: scanCfg?.aggressiveMode ?? false,
       headlessCrawl: scanCfg?.headlessCrawl ?? false,
+      ...(hasAuth ? { auth: authStored } : {}),
     },
     consent: {
       authorized: true,
@@ -78,7 +101,13 @@ export const createScan = asyncHandler(async (req, res) => {
 
   await User.updateOne({ _id: userId }, { $inc: { totalScans: 1 } }).catch(() => {});
 
-  await enqueueScan(scan._id, targetUrl, scan.config.toObject ? scan.config.toObject() : scan.config);
+  // The job config mirrors the persisted config, plus the transient login
+  // password for a form-fill auth crawl (Redis-only — never written to Mongo).
+  const jobConfig = scan.config.toObject ? scan.config.toObject() : { ...scan.config };
+  if (authPassword && hasAuth) {
+    jobConfig.auth = { ...(jobConfig.auth || authStored), password: authPassword };
+  }
+  await enqueueScan(scan._id, targetUrl, jobConfig);
   log.info({ scanId: String(scan._id), domain, scanNumber }, 'scan enqueued');
 
   res.status(201).json({ scan: scan.toJSON() });

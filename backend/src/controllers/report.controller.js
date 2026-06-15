@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Scan, Vulnerability, Report } from '@smartfuzz/shared/models';
+import { Scan, Vulnerability, Report, User } from '@smartfuzz/shared/models';
 import { asyncHandler, notFound, forbidden, badRequest } from '../middleware/error.middleware.js';
 import { buildReportJson, buildReportHtml, buildReportCsv, buildReportMarkdown, buildReportPdf } from '../../../worker/src/scoring/reportGenerator.js';
 
@@ -40,7 +40,13 @@ async function getOrBuildReport(scanId, userId) {
     })),
   );
 
-  const json = buildReportJson(scan.toObject(), vulns, priorData);
+  // Attach the operator email for the report's authorization/consent section
+  // (audit trail) — fetched separately so the main scan query stays unpopulated.
+  const scanObj = scan.toObject();
+  const operator = await User.findById(scan.userId).select('email').lean().catch(() => null);
+  scanObj.operatorEmail = operator?.email || '';
+
+  const json = buildReportJson(scanObj, vulns, priorData);
   const html = buildReportHtml(json);
 
   // Upsert so a rebuild overwrites the stale cache rather than failing on the
