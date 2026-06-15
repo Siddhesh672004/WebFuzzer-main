@@ -8,6 +8,8 @@ import { fuzzEndpoint } from '../engine/payloadFuzzer.js';
 import { mutate } from '../engine/mutationEngine.js';
 import { testAuth } from '../engine/authTester.js';
 import { runActiveDetectors } from '../engine/activeScan.js';
+import { cookiesToHeader } from '../engine/authContext.js';
+import { config as workerConfig } from '../config.js';
 import { getScanContext, releaseScanContext } from './scanContext.js';
 import { initPending, trackJobDone } from './coordinator.js';
 import { enqueueJob, enqueueBulk } from '../queue/queues.js';
@@ -31,6 +33,38 @@ function ctxOptsFromJob(job, publish) {
   return { scanId, targetUrl, config, publish };
 }
 
+/**
+ * Crawl for a fan-out job — headless (browser) when opted in, else the static
+ * cheerio crawler, falling back to static on any headless failure/empty result.
+ * Mirrors ScanRunner.doCrawl so both paths behave identically.
+ */
+async function crawlForJob(targetUrl, ctx, config) {
+  const useHeadless = config.headlessCrawl || workerConfig.SCAN_HEADLESS_CRAWLER;
+  if (useHeadless) {
+    try {
+      const { crawlHeadless } = await import('../engine/headlessCrawler.js');
+      const result = await crawlHeadless(targetUrl, {
+        maxPages: config.maxEndpoints ?? workerConfig.HEADLESS_MAX_PAGES,
+        maxDepth: config.maxDepth ?? 3,
+        timeoutMs: workerConfig.HEADLESS_TIMEOUT_MS,
+        allowPrivate: config.allowPrivate,
+        auth: config.auth || {},
+      });
+      if (result?.cookies?.length) {
+        const cookieHeader = cookiesToHeader(result.cookies);
+        if (cookieHeader) ctx.http.setDefaultHeaders({ Cookie: cookieHeader });
+      }
+      if ((result?.endpoints?.length ?? 0) > 0) return result;
+    } catch (err) {
+      log.warn({ err: err.message }, 'headless crawl failed — falling back to static');
+    }
+  }
+  return crawl(targetUrl, ctx.http, {
+    maxDepth: config.maxDepth ?? 3,
+    maxEndpoints: config.maxEndpoints ?? 500,
+  });
+}
+
 // ── CRAWL: runs first, then fans out Phase 2 ──
 export function makeCrawlHandler({ publish, redis }) {
   return async (job) => {
@@ -46,10 +80,7 @@ export function makeCrawlHandler({ publish, redis }) {
 
     let endpoints = [];
     try {
-      const result = await crawl(targetUrl, ctx.http, {
-        maxDepth: config.maxDepth ?? 3,
-        maxEndpoints: config.maxEndpoints ?? 500,
-      });
+      const result = await crawlForJob(targetUrl, ctx, config);
       endpoints = result.endpoints || [];
       for (const e of endpoints) {
         // eslint-disable-next-line no-await-in-loop
