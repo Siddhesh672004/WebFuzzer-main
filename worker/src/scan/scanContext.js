@@ -2,9 +2,10 @@ import { Scan, Endpoint, Vulnerability } from '@smartfuzz/shared/models';
 import { SSE_EVENTS } from '@smartfuzz/shared/progress';
 import { RateLimiter } from '../safety/rateLimiter.js';
 import { HttpClient } from '../engine/httpClient.js';
+import { buildAuthHeaders } from '../engine/authContext.js';
 import { childLogger } from '../logger.js';
 
-// Per-scan shared context for the fan-out path. The CLAUDE.md invariant is that
+// Per-scan shared context for the fan-out path. The core invariant is that
 // all Phase-2 modules of a scan share ONE rate limiter and ONE HttpClient so
 // concurrent modules can't collectively exceed the target's rate budget. In the
 // monolithic ScanRunner that's trivial (one object). Across fan-out jobs we
@@ -28,7 +29,11 @@ export class ScanContext {
     this.models = models || { Scan, Endpoint, Vulnerability };
 
     const limiter = new RateLimiter(config.rateLimit || 10);
-    this.http = http || new HttpClient({ rateLimiter: limiter, allowPrivate: config.allowPrivate });
+    this.http = http || new HttpClient({
+      rateLimiter: limiter,
+      allowPrivate: config.allowPrivate,
+      defaultHeaders: buildAuthHeaders(config.auth || {}),
+    });
 
     this.counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
     this.vulnCount = 0;
