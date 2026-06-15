@@ -80,7 +80,7 @@ export default function Reports() {
             </div>
             <div className="card p-4">
               <div className="font-mono text-xs text-fg-muted">Most Vulnerable</div>
-              <div className="truncate font-mono text-sm font-bold text-severity-high">{totals.worstTarget || '—'}</div>
+              <div className="truncate font-mono text-sm font-bold text-severity-high">{totals.worstTarget || '-'}</div>
             </div>
           </div>
         )}
