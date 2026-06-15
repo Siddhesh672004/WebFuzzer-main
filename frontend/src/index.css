@@ -5,6 +5,10 @@
 @layer base {
   :root {
     color-scheme: dark;
+    /* Motion tokens (design-engineering standard curves). */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   }
 
   html,
@@ -16,9 +20,38 @@
   body {
     @apply bg-bg text-fg font-sans antialiased;
     margin: 0;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Terminal-style scrollbar to match the hacker theme. */
+  /* Terminals must render glyphs literally: a `--preset` flag may never
+     ligate into an em-dash. */
+  .font-mono,
+  code,
+  pre,
+  kbd {
+    font-variant-ligatures: none;
+  }
+
+  /* Display face for headings; tight tracking for impact. */
+  h1,
+  h2,
+  h3 {
+    @apply font-display tracking-tightest;
+    font-weight: 700;
+  }
+
+  /* Phosphor-green selection + focus ring. */
+  ::selection {
+    background: oklch(0.76 0.17 150 / 0.3);
+    color: oklch(0.97 0.01 145);
+  }
+  :focus-visible {
+    outline: 2px solid oklch(0.76 0.17 150 / 0.8);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Terminal-style scrollbar. */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -33,7 +66,7 @@
     @apply bg-fg-subtle;
   }
 
-  /* Respect reduced-motion preferences globally. */
+  /* Reduced motion: kill movement, keep instant state changes legible. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -51,7 +84,79 @@
     @apply text-accent animate-blink;
   }
 
+  /* Radius system: containers = rounded-lg, controls = rounded-md, pills = rounded-full. */
   .card {
     @apply bg-bg-subtle border border-border rounded-lg;
+  }
+
+  /* Pressable physics: instant feedback on :active, hover gated to real pointers.
+     Transitions are property-scoped (never `transition: all`). */
+  .pressable {
+    transition:
+      transform 160ms var(--ease-out),
+      background-color 150ms var(--ease-out),
+      border-color 150ms var(--ease-out),
+      color 150ms var(--ease-out),
+      box-shadow 200ms var(--ease-out);
+  }
+  .pressable:active {
+    transform: scale(0.97);
+  }
+
+  .btn {
+    @apply pressable inline-flex items-center justify-center gap-2 rounded-md font-medium disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-bg-inset;
+  }
+  .btn-ghost {
+    @apply btn border border-border text-fg;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover:not(:disabled) {
+      @apply bg-accent-glow shadow-glow;
+    }
+    .btn-ghost:hover:not(:disabled) {
+      @apply bg-bg-subtle border-accent/40 text-accent;
+    }
+  }
+
+  /* Monospace data chip — payloads, vectors, scores (data that *is* code). */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-mono;
+  }
+
+  /* CRT texture: faint horizontal scanlines layered over terminal panels.
+     Pointer-transparent, fixed-size panels only — cheap to composite. */
+  .crt {
+    position: relative;
+  }
+  .crt::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      oklch(0 0 0 / 0.14) 0px,
+      oklch(0 0 0 / 0.14) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode: multiply;
+  }
+
+  /* Blueprint grid for the landing surface — static, masked toward the center. */
+  .grid-bg {
+    background-image:
+      linear-gradient(oklch(0.76 0.17 150 / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.76 0.17 150 / 0.05) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 28%, black 35%, transparent 78%);
+  }
+
+  /* Phosphor glow for the brand mark and hero headline accents only. */
+  .text-glow {
+    text-shadow: 0 0 22px oklch(0.76 0.17 150 / 0.45);
   }
 }
