@@ -16,6 +16,8 @@ export class HttpClient {
    *   allowPrivate? boolean
    *   timeoutMs?, maxBodyBytes?
    *   onActivity? (info: { method, url, hop }) => void   live activity hook (never throws)
+   *   defaultHeaders? object   headers merged into every request (e.g. auth Cookie / custom headers
+   *                            for an authenticated crawl); per-request headers still win.
    *   axiosInstance? (injectable for tests)
    */
   constructor(opts = {}) {
@@ -24,7 +26,13 @@ export class HttpClient {
     this.timeoutMs = opts.timeoutMs ?? config.SCAN_REQUEST_TIMEOUT_MS;
     this.maxBodyBytes = opts.maxBodyBytes ?? config.SCAN_MAX_BODY_BYTES;
     this.onActivity = opts.onActivity || null;
+    this.defaultHeaders = opts.defaultHeaders || {};
     this.axios = opts.axiosInstance || axios.create();
+  }
+
+  /** Merge additional default headers (e.g. session cookies captured after a form login). */
+  setDefaultHeaders(headers = {}) {
+    this.defaultHeaders = { ...this.defaultHeaders, ...headers };
   }
 
   /**
@@ -51,7 +59,7 @@ export class HttpClient {
       res = await this.axios.request({
         url,
         method,
-        headers: { 'User-Agent': 'SmartFuzz/0.1 (+security-scanner)', ...headers },
+        headers: { 'User-Agent': 'SmartFuzz/0.1 (+security-scanner)', ...this.defaultHeaders, ...headers },
         data,
         timeout: this.timeoutMs,
         maxRedirects: 0, // we handle redirects ourselves (re-guard each hop)
