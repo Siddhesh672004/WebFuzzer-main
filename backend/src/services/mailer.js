@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { config, isTest } from '../config.js';
+import { config, isTest, isProd } from '../config.js';
 import { childLogger } from '../logger.js';
 
 // Mailer (PRD §4.4). Three transports:
@@ -69,7 +69,6 @@ const otpEmailHtml = (code, ttlMinutes) => `
  */
 export async function sendOtpEmail(email, code) {
   const ttlMinutes = Math.round(config.OTP_TTL_SECONDS / 60);
-  const tx = await getTransporter();
 
   // Gmail SMTP rejects/rewrites a From address that isn't the authenticated
   // account, which can make sends fail. When using the gmail transport, always
@@ -79,16 +78,49 @@ export async function sendOtpEmail(email, code) {
       ? `SmartFuzz <${config.GMAIL_USER}>`
       : config.MAIL_FROM;
 
-  const info = await tx.sendMail({
+  const message = {
     from,
     to: email,
     subject: `Your SmartFuzz verification code: ${code}`,
     text: `Your SmartFuzz verification code is ${code}. It expires in ${ttlMinutes} minutes.`,
     html: otpEmailHtml(code, ttlMinutes),
-  });
+  };
+
+  // Outside production, a broken transport (Ethereal unreachable, SMTP port
+  // blocked, missing Gmail credentials) must not dead-end the login flow:
+  // fall back to the JSON transport and let the controller surface the code
+  // in the UI (devOtp). Production fails loudly — a silent non-send would
+  // look like success while no email goes out.
+  let devFallback = false;
+  const fallback = (err, stage) => {
+    if (isProd()) throw err;
+    log.warn(
+      { err: err.message, stage, transport: config.MAIL_TRANSPORT },
+      'Mail transport failed; falling back to JSON transport (dev only). The OTP will be shown in the UI.',
+    );
+    transporter = null; // retry the real transport on the next send
+    devFallback = true;
+    return nodemailer.createTransport({ jsonTransport: true });
+  };
+
+  let tx;
+  try {
+    tx = await getTransporter();
+  } catch (err) {
+    tx = fallback(err, 'connect');
+  }
+
+  let info;
+  try {
+    info = await tx.sendMail(message);
+  } catch (err) {
+    if (devFallback) throw err; // json transport itself failed — give up
+    tx = fallback(err, 'send');
+    info = await tx.sendMail(message);
+  }
 
   const previewUrl = nodemailer.getTestMessageUrl?.(info) || undefined;
   if (previewUrl) log.info({ previewUrl }, 'OTP email preview (dev)');
 
-  return { messageId: info.messageId, previewUrl };
+  return { messageId: info.messageId, previewUrl, devFallback };
 }
