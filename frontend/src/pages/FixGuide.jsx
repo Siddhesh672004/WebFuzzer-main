@@ -88,10 +88,10 @@ export default function FixGuide() {
         </div>
 
         {/* Verify result banner */}
-        {verified && <Alert variant="success">✅ Verified Fixed — the original payload no longer triggers this vulnerability.</Alert>}
-        {persists && <Alert variant="error">❌ Still Vulnerable — the response still matches the original finding.</Alert>}
+        {verified && <Alert variant="success">Verified fixed: the original payload no longer triggers this vulnerability.</Alert>}
+        {persists && <Alert variant="error">Still vulnerable: the response still matches the original finding.</Alert>}
         {verifyResult === 'queued' && !verified && !persists && (
-          <Alert variant="info">Verification queued — re-testing the endpoint with the original payload…</Alert>
+          <Alert variant="info">Verification queued. Re-testing the endpoint with the original payload…</Alert>
         )}
 
         {/* 3-layer fix guide */}
