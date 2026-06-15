@@ -52,3 +52,14 @@ data/redis/
 *.seed
 .cache/
 tmp/
+
+# AI coding-assistant artifacts (kept local, never published)
+CLAUDE.md
+.claude/
+.claudesync/
+.cursor/
+.cursorrules
+.aider*
+.continue/
+.github/copilot-instructions.md
+.windsurfrules
