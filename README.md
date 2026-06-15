@@ -7,8 +7,10 @@ SmartFuzz gives students, junior developers, and small teams a Burp Suite–leve
 scanning experience at **zero cost**, with a clean, modern, hacker-themed UI.
 You verify by email OTP, paste a target URL, and SmartFuzz crawls it, runs six
 scanning modules, CVSS-scores every finding, generates step-by-step fix guidance,
-and lets you rescan and compare the results over time — all running locally via Docker,
-**with no paid AI APIs and no cloud dependency**.
+and lets you rescan and compare the results over time — all running locally via Docker.
+It sharpens its attack payloads with **context-aware AI generation (the free Google
+Gemini tier)** and falls back to a fully-local curated library when offline — so it
+stays **zero-cost** either way.
 
 ---
 
@@ -26,6 +28,7 @@ targets: DVWA, OWASP WebGoat, OWASP Juice Shop, bWAPP.
 ## Table of contents
 
 - [What SmartFuzz does](#what-smartfuzz-does)
+- [What's new in v0.2 (the upgrade)](#whats-new-in-v02-the-upgrade-)
 - [Tech stack](#tech-stack)
 - [Architecture](#architecture)
 - [Repository layout](#repository-layout)
@@ -61,13 +64,15 @@ worked on the next scan.
 - **One-click scan** with an explicit authorization gate (logged for audit).
 - **Seven scanning modules** — crawler, passive analyzer, exposed-file scanner, tech
   fingerprinter, active payload fuzzer, auth tester, and a JavaScript secret scanner —
-  coordinated by one orchestrator behind a shared rate limiter.
+  plus an **active multi-request detector stage** (IDOR / JWT `alg:none` / session
+  fixation), all coordinated by one orchestrator behind a shared rate limiter.
 - **Live progress** streamed to the browser over Server-Sent Events (SSE): progress
   %, per-module status, and findings as they're confirmed.
 - **CVSS v3.1 scoring** computed with the FIRST.org Appendix-A integer roundup
   (scope-dependent privileges handled correctly), mapped to severity bands and a
   0–100 security score.
-- **39 vulnerability types** across the OWASP Top 10 (2021), each with a fix guide.
+- **42 vulnerability types** across the OWASP Top 10 (2021), each with a CVSS vector and a
+  fix guide (a CI test enforces 1:1 coverage so no type can ship without guidance).
 - **Exposed-secret detection** — fetches every same-host JavaScript file the crawler
   finds and scans it for ~38 secret patterns (AWS/Google/Stripe/GitHub keys, DB
   connection strings, private keys, JWTs, hardcoded passwords). Only a masked preview
@@ -91,6 +96,136 @@ worked on the next scan.
 - A small team tracking whether last sprint's security fixes held up.
 - A security course needing a safe, offline, reproducible scanner that never touches
   the live internet during tests.
+
+---
+
+## What's new in v0.2 (the upgrade) 🚀
+
+This release closes the gap between SmartFuzz's *registry* (the list of things it
+knows about) and its *active detection* (the things it can actually prove), adds an
+opt-in browser crawler and AI payload generation, upgrades the reports, and gives the
+whole app a redesigned look. Everything below is **on by default unless marked
+opt-in**, and nothing here requires a paid API or breaks the "works offline" promise.
+
+If you're new to the project, think of each item as "a new thing SmartFuzz can now
+find or do."
+
+### 🔎 More vulnerabilities it can actually confirm
+
+The fuzzer and a new **active-detector** stage now confirm classes that were
+previously only catalogued:
+
+- **SSRF (Server-Side Request Forgery)** — when a parameter like `?url=` / `?content=`
+  / `?fetch=` makes the server fetch a URL *you* supply. SmartFuzz only flags it with
+  **proof** (cloud-metadata content or an internal-service banner echoed back), so it
+  doesn't cry wolf on a plain `200 OK`. A big latency spike on an internal address is
+  surfaced as a "possible blind SSRF" lead rather than a false finding.
+- **IDOR (Insecure Direct Object Reference)** — tries neighbouring IDs on numeric URL
+  parameters (`?id=5` → `4`, `6`, `999999`) and flags when another user's record comes
+  back, with a "manual verification recommended" note.
+- **JWT `alg:none`** — if the app uses a JSON Web Token in a cookie, SmartFuzz forges an
+  unsigned (`alg:none`) copy and replays it. If the server accepts it, that's a critical
+  auth bypass.
+- **XXE (XML External Entity)** — posts crafted XML to body-accepting endpoints and
+  confirms when the server leaks a file (`/etc/passwd`-class content).
+- **Verbose-error / stack-trace disclosure** — a payload that triggers an HTTP 500 with
+  a Java / Python / PHP / .NET / **Spring** stack trace is recorded as an information
+  leak (paths, framework, versions).
+- **Time-based command injection** — a `; sleep 5` / `ping` payload that delays the
+  response confirms blind RCE even when nothing is echoed back; Windows command output
+  (`COMPUTERNAME=`) is now recognised too.
+- **Session fixation** (opt-in via Aggressive mode) plus the already-present **NoSQL /
+  LDAP / XPath / CRLF** detectors are now wired into every scan path.
+
+### 🌐 Headless (browser) crawler — *opt-in*
+
+Modern single-page apps (React/Vue/Angular) build their links and forms with
+JavaScript, so a plain HTML crawler sees almost nothing. Enable
+`SCAN_HEADLESS_CRAWLER=true` (or tick **Headless crawl** in Advanced options) and
+SmartFuzz drives a real headless browser to render the page, discover JS-built routes,
+and capture the XHR/fetch API calls the app makes. It reuses the **Puppeteer/Chromium
+already bundled for screenshots** — no new ~300 MB dependency — and automatically falls
+back to the fast static crawler if anything goes wrong.
+
+### 🔐 Authenticated crawl — *opt-in*
+
+Scan the pages behind a login. Three modes, configured on the New Scan page:
+- **cookie** — paste a session cookie string;
+- **headers** — paste custom headers (e.g. `Authorization: Bearer …`);
+- **form_fill** — give a login URL + field names + credentials and the headless crawler
+  logs in for you. **The password is never stored in the database** — it travels only in
+  the transient scan job and is discarded after the crawl. Captured session cookies are
+  shared with every other module so the whole scan runs authenticated.
+
+### 🤖 AI payload generation — *opt-in, off by default*
+
+Set `AI_PAYLOAD_MODE=gemini` (free Google Gemini API key) or `ollama` (a fully-local
+model — no key, no internet) and SmartFuzz asks the model for a few extra,
+context-aware payloads tuned to each parameter, *on top of* the deterministic curated
+set (it never replaces it). A **circuit breaker** trips on rate-limit (HTTP 429) and
+falls back to curated-only, so a free quota can't stall a scan. An **adaptive second
+pass** re-tests confirmed critical/high findings with AI escalation variants. With the
+default `AI_PAYLOAD_MODE=off`, none of this runs and no network is touched.
+
+### ⚠️ Aggressive mode toggle
+
+Intrusive checks (real default-credential login attempts, session-fixation probes) are
+now **off by default** and gated behind an explicit **Aggressive mode** switch with a
+warning — so a routine scan never submits login attempts to a target you don't fully
+control.
+
+### 📊 Benchmark page + API
+
+A new **Benchmark** page (`/benchmark`, API `GET /api/benchmark/stats`) shows your
+coverage at a glance: scans run, findings, vuln-types seen vs. detectable, average
+security score, a findings-by-type breakdown, a severity distribution, the score trend,
+and a documented **SmartFuzz vs OWASP ZAP** capability comparison.
+
+### 📄 Richer reports
+
+Every generated report (HTML / PDF / JSON / Markdown) now includes:
+- an **Authorization & Legal Consent** page (operator, timestamp, IP, the three consent
+  statements, and the IT Act 2000 / CFAA / Computer Misuse Act references);
+- a **Disclaimer & Methodology** section;
+- a **deduplication audit** (raw payload firings → unique findings, dedup rate, and the
+  signing algorithm);
+- **aggregate CVSS** headline figures (highest + average CVSS) in the executive summary
+  and on the results page.
+
+Reports are also **cache-invalidated** now: if a scan's data changes (e.g. after a
+verify-fix re-test) the report is rebuilt automatically, and `DELETE /api/reports/:scanId`
+forces a fresh build.
+
+### 🎯 Demo mode + more knowledge
+
+- **Demo mode** (`SMARTFUZZ_DEMO_MODE=true`) pre-fills the New Scan page with an
+  authorized public test target and shows a banner — handy for a live walkthrough.
+- The **sensitive-paths** list grew to **200+** entries and the **CVE database** to
+  **25+** technology families (now including Ruby on Rails).
+
+### 🎨 The "Phosphor" interface + a public landing page
+
+The original hacker-terminal identity is back, rebuilt properly. The whole UI runs on
+a perceptually-uniform **OKLCH** token system: green-tinted terminal blacks (never flat
+`#000`), one **phosphor-green** signature accent (brand, primary action, focus, live
+state), and semantic severity colours that mirror the CVSS bands so risk reads
+instantly. Type is **Space Grotesk** for display, **Geist** for body text, and
+**JetBrains Mono** (ligatures disabled, so `--flag` never renders as an em-dash) for
+data that *is* code: payloads, URLs, CVSS vectors, scores.
+
+Motion follows design-engineering discipline: UI animations stay under 300ms on custom
+ease-out curves, only `transform`/`opacity` ever animate, pressables give instant
+`scale(0.97)` feedback, hover effects are gated to real pointers, and everything
+collapses gracefully under `prefers-reduced-motion`. Signature touches are reserved for
+moments that mean something: a blinking terminal cursor, CRT scanlines over log panels,
+and a soft phosphor glow on the brand and primary actions.
+
+There is also a new **public landing page** at `/`: an auto-typed terminal replay of a
+real scan (module-by-module output, severity-coloured findings, final score), a
+seven-cell module grid, scoring and rescan-comparison showcases, and the safety
+engineering, all scroll-revealed with staggered entrances. It stays fast on a poor
+connection: route-based code-splitting (the landing chunk is ~8 kB gzip), virtualized
+lists, and GPU-only animations.
 
 ---
 
@@ -156,16 +291,14 @@ smartfuzz/
 ├── docker-compose.testing.yml    # DVWA, WebGoat, Juice Shop, bWAPP (--profile testing)
 ├── .env.example                  # every env var, documented
 ├── package.json                  # workspaces + root scripts
-├── SmartFuzz_PRD.md              # product spec (v3.0)
 ├── IMPLEMENTATION_PLAN.md        # phased TDD build plan
-├── SmartFuzz_Project_Context.md  # constraints & rationale
 ├── THIRD_PARTY_NOTICES.md        # data-source & clean-room attribution
 │
 ├── shared/                       # contract layer (no network, no Express)
 │   └── src/
 │       ├── models/               # User, Target, Scan, Endpoint, Vulnerability, Payload, Report
 │       ├── severity.js           # bands, ranks, score penalties, severityFromScore()
-│       ├── vulnTypes.js          # 39-type registry mapped to OWASP Top 10
+│       ├── vulnTypes.js          # 42-type registry mapped to OWASP Top 10
 │       ├── cvssVectors.js        # canonical CVSS:3.1 vector per type/subtype
 │       ├── signatures.js         # stable cross-scan signature (sha1)
 │       ├── queues.js             # QUEUES, JOBS, PRIORITY constants
@@ -193,18 +326,23 @@ smartfuzz/
 │       ├── scoring/              # cvss, securityScore, comparison, reportGenerator
 │       └── knowledge/            # cveDatabase, fixGuides, sensitivePaths
 │
-├── frontend/                     # React + Vite SPA
+├── frontend/                     # React + Vite SPA ("Phosphor" terminal theme)
 │   ├── nginx.conf                # SPA fallback + /api proxy with SSE tuning
+│   ├── tailwind.config.js        # OKLCH token system: surfaces, accent, severity
 │   └── src/
 │       ├── main.jsx  App.jsx     # bootstrap + routes
 │       ├── api/                  # client (axios), scans
-│       ├── hooks/useAuth.js      # React Query auth state
-│       ├── components/           # ProtectedRoute, ui (Button/Input/Alert)
-│       └── pages/                # Verify, Dashboard, NewScan, ScanMonitor,
-│                                 #   ScanResults, Comparison, Reports
+│       ├── hooks/                # useAuth (React Query), useMediaQuery
+│       ├── lib/                  # palette (chart hex mirror), vulnLabels
+│       ├── components/           # ProtectedRoute, Layout, BottomNav, ScanTerminal,
+│       │                         #   VulnerabilityCard/DetailSheet, gauges, charts,
+│       │                         #   ui primitives (Button/Input/Alert/Badge/…)
+│       └── pages/                # Landing, Verify, Dashboard, NewScan, ScanMonitor,
+│                                 #   ScanResults, FixGuide, Comparison, Reports,
+│                                 #   Benchmark
 │
 └── payloads/                     # payload library
-    ├── curated.js                # 59 built-in payloads (works out of the box)
+    ├── curated.js                # curated built-in payloads (works out of the box)
     ├── setup.js                  # optional: shallow-clone SecLists/PATT/FuzzDB
     ├── wordlistParser.js         # parse cloned wordlists → payload records
     └── seed.js                   # upsert payloads into MongoDB
@@ -216,6 +354,10 @@ smartfuzz/
 
 Step-by-step, mapped to page components and API calls:
 
+0. **Landing** (`/` → [Landing.jsx](frontend/src/pages/Landing.jsx)) — the public page:
+   animated terminal scan replay, the seven modules, scoring/comparison showcases, and
+   the safety story. "Launch console" / "Start scanning" route into the app (via
+   `/verify` when unauthenticated). No API calls.
 1. **Verify** (`/verify` → [Verify.jsx](frontend/src/pages/Verify.jsx)) — enter email →
    `POST /api/auth/send-otp`. In dev the response carries `devOtp` / `previewUrl` hints.
    Enter the 6-digit code → `POST /api/auth/verify-otp` → backend sets the httpOnly JWT
@@ -233,13 +375,19 @@ Step-by-step, mapped to page components and API calls:
 5. **Results** (`/results/:id` → [ScanResults.jsx](frontend/src/pages/ScanResults.jsx)) —
    `GET /api/scans/:id` + `GET /api/scans/:id/vulnerabilities`. Security score, severity
    filter, and expandable findings (param, CVSS vector, payload, evidence, OWASP ref).
+   Each finding links to a full-screen **fix guide** (`/fix/:scanId/:vulnId` →
+   [FixGuide.jsx](frontend/src/pages/FixGuide.jsx)) with before/after code and one-click
+   fix re-verification.
 6. **Comparison** (`/compare/:domain` →
    [Comparison.jsx](frontend/src/pages/Comparison.jsx)) — `GET /api/scans/target/:domain`.
    Score-trend chart + per-scan summary table.
 7. **Reports** (`/reports` → [Reports.jsx](frontend/src/pages/Reports.jsx)) — lists
    completed scans with HTML/PDF/CSV/Markdown download buttons
    (`GET /api/reports/:scanId/<format>`, fetched as a blob).
-8. **Logout** — `POST /api/auth/logout` clears the cookie and bounces to `/verify`.
+8. **Benchmark** (`/benchmark` → [Benchmark.jsx](frontend/src/pages/Benchmark.jsx)) —
+   `GET /api/benchmark/stats`. Coverage metrics, findings-by-type, severity distribution,
+   score trend, and a documented SmartFuzz-vs-OWASP-ZAP comparison.
+9. **Logout** — `POST /api/auth/logout` clears the cookie and bounces to `/verify`.
 
 All routes except `/verify` are wrapped in
 [ProtectedRoute.jsx](frontend/src/components/ProtectedRoute.jsx), which checks
@@ -276,10 +424,13 @@ audit snapshot (IP, user-agent, timestamp) → `enqueueScan()`
 
 **Running a scan** (worker, [scanRunner.js](worker/src/scan/scanRunner.js)):
 the `ORCHESTRATE` worker in [index.js](worker/src/index.js) builds a `ScanRunner`. It
-emits `status: running`, then **Phase 1** runs the crawler sequentially (also collecting
-same-host `<script src>` JS URLs); **Phase 2** runs passive, exposed, tech, fuzzer, auth,
-and the JS secret scanner — all sharing **one** `RateLimiter` and one `HttpClient` so
-concurrency can't DoS the target. Each module's findings are normalized by
+emits `status: running`, then **Phase 1** runs the crawler sequentially (static, or the
+opt-in headless browser crawler; also collecting same-host `<script src>` JS URLs);
+**Phase 2** runs passive, exposed, tech, fuzzer, auth, the JS secret scanner, and the
+active multi-request detectors (IDOR / JWT / session-fixation) — all sharing **one**
+`RateLimiter` and one `HttpClient` so concurrency can't DoS the target. An optional
+adaptive AI second pass then re-tests confirmed critical/high findings (no-op unless
+`AI_PAYLOAD_MODE` is set). Each module's findings are normalized by
 `makeFinding()`, deduped by signature, and upserted into the `Vulnerability` collection;
 the `Scan` doc's progress/stats are updated and a `done` event is emitted. When
 `SCAN_SCREENSHOTS=true`, confirmed XSS / open-redirect findings additionally trigger a
@@ -345,7 +496,7 @@ The seven engine modules map to these files, all orchestrated by
 |---|--------|------|--------------|-----------|
 | 1 | **Crawler** | [crawler.js](worker/src/engine/crawler.js) | BFS same-host crawl up to `maxDepth`/`maxEndpoints`; extracts links, forms, query params, and `<script src>` JS URLs | cheerio HTML parsing; URL normalization (fragment stripped, params sorted) |
 | 2 | **Passive analyzer** | [passiveAnalyzer.js](worker/src/engine/passiveAnalyzer.js) | Findings from a normal response: missing HTTPS/HSTS/CSP/X-Frame/X-Content-Type, version disclosure, CORS `*`, insecure cookies, stack-trace/internal-IP/email leakage | header inspection + body regexes (ZAP-ported) |
-| 3 | **Exposed files** | [exposedFiles.js](worker/src/engine/exposedFiles.js) | Probes 32 sensitive paths (`.env`, `.git/HEAD`, `/admin`, `/actuator`, …) | **mandatory soft-404 detection** via two random control paths + content fingerprint before flagging |
+| 3 | **Exposed files** | [exposedFiles.js](worker/src/engine/exposedFiles.js) | Probes 200+ sensitive paths (`.env`, `.git/HEAD`, `/admin`, `/actuator`, swagger, backups, …) | **mandatory soft-404 detection** via two random control paths + content fingerprint before flagging |
 | 4 | **Tech fingerprinter** | [techFingerprinter.js](worker/src/engine/techFingerprinter.js) | Detects framework/server/library + version, then matches the **local CVE database** | header/cookie/meta/path/JS-filename patterns → `matchCves(tech, version)` |
 | 5 | **Payload fuzzer** | [payloadFuzzer.js](worker/src/engine/payloadFuzzer.js) | Active injection: classify params → load payloads → baseline → fire → analyze → mutate HIGH_INTEREST hits | see classifier/engine/analyzer/mutation below |
 | 6 | **Auth tester** | [authTester.js](worker/src/engine/authTester.js) | On pages with a password field: brute-force-protection check (20 rapid POSTs; expects 429/403) and 6 default-credential combos | response-based success heuristics |
@@ -364,8 +515,17 @@ The fuzzer is itself a small pipeline:
 - **`analyzeResponse(baseline, response, meta)`** ([responseAnalyzer.js](worker/src/engine/responseAnalyzer.js))
   applies ZAP-ported detection rules: SQL error signatures, **time-based SQLi** (response
   > 2× baseline, ≥5s), reflected XSS (unencoded echo), LFI (`root:x:0:0`), RCE
-  (`uid=…(`), SSTI (`{{7*7}}`→`49`), open redirect (cross-origin `Location`). Anomalies
-  (HTTP 500, ±20% body, 3× latency) return `interest: HIGH/MEDIUM` to trigger mutation.
+  (`uid=…(` **and** time-based `sleep`/`ping`, Windows `COMPUTERNAME=`), SSTI
+  (`{{7*7}}`→`49`), open redirect (cross-origin `Location`), **SSRF** (cloud-metadata /
+  internal-banner proof), **NoSQL / LDAP / XPath / CRLF** injection, **XXE** (file
+  disclosure via XML body), and **stack-trace disclosure** on a payload-induced HTTP 500
+  (Java/Python/PHP/.NET/Spring). Anomalies (other 500s, ±20% body, 3× latency) return
+  `interest: HIGH/MEDIUM` to trigger mutation.
+- **Active (multi-request) detectors** ([activeDetectors.js](worker/src/engine/activeDetectors.js)
+  + [activeScan.js](worker/src/engine/activeScan.js)) run a dedicated stage that can't be
+  decided from one response: **IDOR** (neighbour-ID enumeration), **JWT `alg:none`**
+  (forge-and-replay), and **session fixation** (login-boundary cookie rotation, gated by
+  Aggressive mode).
 - **`mutate(payload, attackType)`** ([mutationEngine.js](worker/src/engine/mutationEngine.js))
   generates WAF-bypass variants (comment-spacing, case toggling, URL/entity encoding,
   tag/function swaps, `../` obfuscation) — chased ahead of fresh payloads.
@@ -474,7 +634,7 @@ MongoDB collections (Mongoose schemas in [shared/src/models/](shared/src/models/
 |------|------|
 | [shared/src/queues.js](shared/src/queues.js) | `QUEUES`/`JOBS`/`PRIORITY` — the single source of truth both processes agree on |
 | [shared/src/progress.js](shared/src/progress.js) | `progressChannel(id)` + `SSE_EVENTS` (`progress`, `finding`, `module`, `status`, `done`) |
-| [shared/src/vulnTypes.js](shared/src/vulnTypes.js) | 39-type registry keyed to OWASP Top 10 (2021) |
+| [shared/src/vulnTypes.js](shared/src/vulnTypes.js) | 42-type registry keyed to OWASP Top 10 (2021) |
 | [shared/src/cvssVectors.js](shared/src/cvssVectors.js) | Canonical CVSS:3.1 vector + expected score per type/subtype |
 | [backend/src/app.js](backend/src/app.js) | Express factory: helmet → cors → json → cookies → pino → routes → error handlers |
 | [backend/src/controllers/scan.controller.js](backend/src/controllers/scan.controller.js) | Scan create/list/get/delete + the SSE progress endpoint |
@@ -487,18 +647,20 @@ MongoDB collections (Mongoose schemas in [shared/src/models/](shared/src/models/
 | [worker/src/services/screenshotCapture.js](worker/src/services/screenshotCapture.js) | Puppeteer screenshot evidence (opt-in via `SCAN_SCREENSHOTS`, SSRF-guarded, lazy import) |
 | [worker/src/engine/httpClient.js](worker/src/engine/httpClient.js) | The single guarded, rate-limited, capped outbound client |
 | [worker/src/scoring/cvss.js](worker/src/scoring/cvss.js) | CVSS v3.1 calculator with Appendix-A roundup |
-| [worker/src/knowledge/fixGuides.js](worker/src/knowledge/fixGuides.js) | 39 fix guides (what/why/steps/before/after/verify), one per emittable type |
+| [worker/src/knowledge/fixGuides.js](worker/src/knowledge/fixGuides.js) | 42 fix guides (what/why/steps/before/after/verify), one per emittable type |
 | [worker/src/knowledge/cveDatabase.js](worker/src/knowledge/cveDatabase.js) | Curated local tech→CVE map (jQuery, Bootstrap, lodash, WordPress, Drupal, PHP, Apache, nginx, OpenSSL, …) |
-| [payloads/curated.js](payloads/curated.js) | 59 built-in payloads so scans work with zero setup |
+| [payloads/curated.js](payloads/curated.js) | Curated built-in payloads (SQLi/XSS/SSRF/NoSQL/XXE/LDAP/CRLF/…) so scans work with zero setup |
 | [frontend/nginx.conf](frontend/nginx.conf) | SPA fallback + `/api` proxy tuned for SSE (`proxy_buffering off`, 3600s read timeout) |
 
 ---
 
 ## External integrations
 
-SmartFuzz makes **no paid-API and no cloud calls during a scan** — detection runs
-entirely against the target and bundled local data. The one heavier optional dependency
-is a headless Chromium (Puppeteer) for screenshot evidence, which is **off by default**.
+SmartFuzz makes **no paid-API calls** — detection runs against the target, bundled
+local data, and the **free Google Gemini tier** for AI payload generation (which
+degrades to the local curated library when no key is set or the quota is hit). The
+one heavier optional dependency is a headless Chromium (Puppeteer) for screenshot
+evidence, which is **off by default**.
 
 - **Email (Nodemailer)** — the only outbound integration. **Ethereal** (throwaway SMTP,
   logs a preview URL) in dev; **Gmail** SMTP via `GMAIL_USER` + `GMAIL_APP_PASSWORD` in
@@ -513,6 +675,13 @@ is a headless Chromium (Puppeteer) for screenshot evidence, which is **off by de
   set.
 - **OWASP ZAP pscanrules (reference, not runtime)** — passive-scan regexes were ported
   clean-room to JS; no ZAP code is bundled. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **AI payload generation (Gemini-powered, on by default)** — `AI_PAYLOAD_MODE=gemini`
+  (the shipped default) calls the free Google Gemini REST API for context-aware
+  payloads; `=ollama` calls a local Ollama server (no internet); `=off` disables it
+  entirely. If no `GEMINI_API_KEY` is set or the free quota is hit, the engine
+  transparently falls back to curated payloads, so scans never fail and offline use is
+  unaffected. The worker config still *defaults* to `off`, so CI/grading run key-free.
+  Implemented over plain HTTP (no SDK dependency) with a 429 circuit breaker.
 - **Local CVE database** — `matchCves()` runs against the bundled
   [cveDatabase.js](worker/src/knowledge/cveDatabase.js); there is **no NVD API call** at
   scan time.
@@ -572,6 +741,9 @@ Grouped by purpose (see [.env.example](.env.example) for full defaults):
 | **Scan safety** | `SCAN_RATE_LIMIT` (10), `SCAN_MAX_DEPTH` (3), `SCAN_MAX_ENDPOINTS` (500), `SCAN_REQUEST_TIMEOUT_MS` (10000), `SCAN_WALLCLOCK_BUDGET_MS` (1800000), `SCAN_MAX_BODY_BYTES` (2097152), `SCAN_ALLOW_PRIVATE` (false) |
 | **Screenshots** | `SCAN_SCREENSHOTS` (false — opt-in Puppeteer evidence), `SCREENSHOT_DIR` (`/tmp/smartfuzz-screenshots`; shared worker↔backend volume), `PUPPETEER_EXECUTABLE_PATH` (set to system Chromium in Docker) |
 | **Worker** | `WORKER_FUZZ_CONCURRENCY` (5), `WORKER_FANOUT` (false) |
+| **Headless crawl** *(opt-in)* | `SCAN_HEADLESS_CRAWLER` (false), `HEADLESS_MAX_PAGES` (20), `HEADLESS_TIMEOUT_MS` (15000), `PUPPETEER_EXECUTABLE_PATH` (shared with screenshots) |
+| **AI payloads** *(opt-in)* | `AI_PAYLOAD_MODE` (off\|gemini\|ollama), `GEMINI_API_KEY`, `GEMINI_MODEL` (gemini-2.0-flash-lite), `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (mistral), `AI_PAYLOAD_RATE_LIMIT_COOLDOWN_MS` (120000), `AI_PAYLOAD_MAX_PER_TYPE` (5) |
+| **Demo mode** | `SMARTFUZZ_DEMO_MODE` (false), `SMARTFUZZ_DEMO_TARGET` (`http://testphp.vulnweb.com`) |
 | **Logging** | `LOG_LEVEL` (info) |
 
 Both backend and worker validate their env with **zod** at startup and **fail fast** on
@@ -596,39 +768,40 @@ path E2E ([happy-path.spec.js](frontend/e2e/happy-path.spec.js)).
 
 ## Current limitations & areas for improvement
 
-Honest assessment of where the codebase stands today:
+Honest assessment of where the codebase stands today (after the v0.2 upgrade above).
 
-- **Per-module queues are wired but not used for fan-out.** `index.js` registers a worker
-  for each of the six module queues, but those handlers are still **placeholders** — the
-  real work runs inside `ScanRunner` on the single `orchestrate-queue`. The PRD's
-  "six independent queues firing simultaneously" is an architectural seam that isn't
-  fully realized; modules run concurrently *within one job* via `Promise`, not as
-  distributed jobs. Adaptive `PRIORITY` (mutations jumping the queue) is defined in
-  `shared/queues.js` but not yet exercised end-to-end.
-- **Detection breadth vs. the registry.** 39 vuln *types* and CVSS vectors are defined,
-  but several (XXE, stored XSS confirmation, session fixation, JWT `alg:none`, NoSQL/LDAP/
-  XPath injection) are catalogued without full active detectors yet. The fuzzer's
-  confirmed detectors center on SQLi, XSS, path traversal, RCE, SSTI, and open redirect;
-  the passive, exposed-file, tech-fingerprint, auth, and JS-secret modules cover the rest.
-- **Sensitive-paths list is 32 entries**, not the "150+" the PRD aspired to —
-  easy to extend in [sensitivePaths.js](worker/src/knowledge/sensitivePaths.js).
-- **CVE database is illustrative.** ~10 tech families with one or two CVEs each, by design
-  (zero external calls). It demonstrates the detect-version→match-CVE pipeline rather than
-  providing exhaustive coverage; an offline NVD snapshot would be the upgrade path.
-- **Auth tester sends real default-credential POSTs** (admin/admin, etc.). That's
-  intentional for authorized testing, but it's intrusive — worth gating behind an
-  "aggressive" toggle.
-- **Crawler is static-HTML only** (cheerio). SPAs/JS-rendered routes and APIs behind
-  client-side routing won't be discovered without a headless-browser crawler.
-- **Frontend libraries partially unused.** `recharts`, `framer-motion`, and
-  `@tanstack/react-virtual` are bundled (and chunk-split) but not yet wired into the
-  pages — opportunities for the score-trend chart, animations, and virtualized finding
-  lists the PRD calls for.
-- **Reports are built on demand and cached**, but there's no regeneration/invalidation if
-  a scan's data changes after the first report build.
-- **Scaling.** Single worker process by default; horizontal scaling would need queue
-  fan-out (above) and care around the per-scan in-memory `RateLimiter`, which is local to
-  a process.
+**Resolved in v0.2** (kept here so older notes don't mislead): per-module BullMQ fan-out
+is now a real, Redis-coordinated path (`WORKER_FANOUT=true`); the dormant detectors (SSRF,
+IDOR, JWT `alg:none`, XXE, NoSQL/LDAP/XPath/CRLF, stored-XSS, session-fixation,
+stack-trace disclosure, time-based RCE) are now wired and confirmable; the sensitive-paths
+list is 200+; default-credential probing is gated behind Aggressive mode; an opt-in
+headless crawler handles SPAs; `recharts`/`framer-motion`/`react-virtual` are wired; and
+reports are cache-invalidated. 
+
+**Remaining limitations:**
+
+- **Rate limiter is per-process.** In `WORKER_FANOUT` mode the fan-out jobs share one
+  rate limiter *within a worker process* (via the per-scan context cache). Running
+  **multiple** worker replicas would need a Redis-backed token bucket to keep the shared
+  rate-limit invariant across processes.
+- **CVE database is curated, not exhaustive.** ~25 tech families with a couple of CVEs
+  each, by design (zero external calls at scan time). It demonstrates the
+  detect-version→match-CVE pipeline; an offline NVD snapshot would be the scale-up path.
+  The tech *fingerprinter* also doesn't yet recognise every family the CVE map covers
+  (e.g. a `rails` CVE entry exists, but Rails fingerprinting is limited).
+- **AI / headless / authenticated crawl are opt-in and unverified in CI.** They're
+  off by default and exercised by unit tests with mocked backends; they aren't part of the
+  automated end-to-end run (which stays offline and browser-free). A live Gemini/Ollama
+  key or a real Chromium is needed to use them for real.
+- **IDOR & blind-SSRF are advisory by nature.** Object-level authorization and blind SSRF
+  can't be fully auto-proven; those findings carry a "manual verification recommended"
+  note rather than hard proof.
+- **Benchmark precision is coverage-based, not ground-truth.** True precision/recall needs
+  labelled datasets we don't have at runtime, so the Benchmark page reports measurable
+  facts (coverage, distribution, trend) and a *documented* ZAP comparison — it does not
+  fabricate a precision percentage.
+- **TypeScript migration not done.** The frontend is JSX/JS (the optional P6.3 TS pass was
+  out of scope for this release).
 
 ---
 
