@@ -102,7 +102,7 @@ export default function ScanMonitor() {
       pushLog('scan complete', 'success');
       es.close();
     });
-    es.onerror = () => { setConnected(false); setSseError('Live stream interrupted — falling back to polling.'); es.close(); };
+    es.onerror = () => { setConnected(false); setSseError('Live stream interrupted. Falling back to polling.'); es.close(); };
 
     return () => es.close();
   }, [id]);
@@ -175,7 +175,7 @@ export default function ScanMonitor() {
           </div>
           {/* Live status strip: liveness dot + elapsed + counters */}
           <div className="flex items-center gap-4 font-mono text-xs text-fg-muted">
-            <span className="inline-flex items-center gap-1.5" title={alive ? 'Live — receiving events' : 'No recent events'}>
+            <span className="inline-flex items-center gap-1.5" title={alive ? 'Live: receiving events' : 'No recent events'}>
               <span className={`h-2.5 w-2.5 rounded-full ${isTerminal ? 'bg-fg-subtle' : alive ? 'animate-pulse bg-accent' : 'bg-severity-medium'}`} />
               {isTerminal ? 'finished' : alive ? 'live' : 'waiting…'}
             </span>
@@ -190,7 +190,7 @@ export default function ScanMonitor() {
         {isTerminal && (
           <Alert variant="success">
             <span className="inline-flex items-center gap-2">
-              <CheckCircle2 size={16} /> Scan complete — {findings.length} findings in {fmtElapsed(elapsedSeconds)}.
+              <CheckCircle2 size={16} /> Scan complete: {findings.length} findings in {fmtElapsed(elapsedSeconds)}.
             </span>
           </Alert>
         )}
