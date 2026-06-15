@@ -33,6 +33,23 @@ const schema = z.object({
   SCAN_SCREENSHOTS: boolish(false),
   SCREENSHOT_DIR: z.string().min(1).default('/tmp/smartfuzz-screenshots'),
 
+  // Headless (browser) crawler — opt-in for SPA/JS-rendered targets. Uses the
+  // Puppeteer/Chromium already present for screenshots (no extra dependency).
+  // Off by default so the default build stays browser-free.
+  SCAN_HEADLESS_CRAWLER: boolish(false),
+  HEADLESS_MAX_PAGES: z.coerce.number().int().positive().default(20),
+  HEADLESS_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+
+  // AI payload generation — off by default so CI/grading never needs a key or
+  // network. 'gemini' uses the free Gemini API; 'ollama' uses a local model.
+  AI_PAYLOAD_MODE: z.enum(['off', 'gemini', 'ollama']).default('off'),
+  GEMINI_API_KEY: z.string().optional().default(''),
+  GEMINI_MODEL: z.string().min(1).default('gemini-2.0-flash-lite'),
+  OLLAMA_BASE_URL: z.string().min(1).default('http://localhost:11434'),
+  OLLAMA_MODEL: z.string().min(1).default('mistral'),
+  AI_PAYLOAD_RATE_LIMIT_COOLDOWN_MS: z.coerce.number().int().nonnegative().default(120000),
+  AI_PAYLOAD_MAX_PER_TYPE: z.coerce.number().int().nonnegative().default(5),
+
   WORKER_FUZZ_CONCURRENCY: z.coerce.number().int().positive().default(5),
 
   // Fan-out mode: when true, a scan is split into one BullMQ job per module
