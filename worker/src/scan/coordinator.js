@@ -1,6 +1,7 @@
 import { Scan, Endpoint, Vulnerability } from '@smartfuzz/shared/models';
 import { progressChannel, SSE_EVENTS } from '@smartfuzz/shared/progress';
 import { QUEUES, JOBS, PRIORITY } from '@smartfuzz/shared/queues';
+import { computeAggregateStats } from '../scoring/securityScore.js';
 import { childLogger } from '../logger.js';
 
 // Scan completion coordinator (Phase 3 fan-out). The orchestrator enqueues one
@@ -103,10 +104,12 @@ export async function completeScan(redis, scanId, deps = {}) {
   const counts = { critical: 0, high: 0, medium: 0, low: 0, informational: 0 };
   let totalVulns = 0;
   let totalEndpoints = 0;
+  let aggregate = { maxCvssScore: 0, avgCvssScore: 0 };
   try {
-    const vulns = await models.Vulnerability.find({ scanId }).select('severity').lean();
+    const vulns = await models.Vulnerability.find({ scanId }).select('severity cvssScore').lean();
     totalVulns = vulns.length;
     for (const v of vulns) counts[v.severity] = (counts[v.severity] || 0) + 1;
+    aggregate = computeAggregateStats(vulns);
     totalEndpoints = await models.Endpoint.countDocuments({ scanId });
   } catch (err) {
     log.warn({ err: err.message, scanId }, 'failed to aggregate scan stats');
@@ -127,6 +130,8 @@ export async function completeScan(redis, scanId, deps = {}) {
           'stats.endTime': new Date(),
           'stats.totalEndpoints': totalEndpoints,
           'stats.totalVulnerabilities': totalVulns,
+          'stats.maxCvssScore': aggregate.maxCvssScore,
+          'stats.avgCvssScore': aggregate.avgCvssScore,
           'stats.critical': counts.critical,
           'stats.high': counts.high,
           'stats.medium': counts.medium,
