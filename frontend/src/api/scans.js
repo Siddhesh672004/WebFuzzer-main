@@ -23,6 +23,19 @@ export const scanApi = {
     api.get(`/scans/target/${encodeURIComponent(domain)}`).then((r) => r.data),
 };
 
+// Benchmark metrics (P4.4) + public runtime flags (demo mode, P6.2).
+export const benchmarkApi = {
+  stats: () => api.get('/benchmark/stats').then((r) => r.data),
+};
+export const metaApi = {
+  get: () => api.get('/meta').then((r) => r.data),
+};
+
+// Report cache invalidation (P0.2) — drop the cached report so the next view rebuilds.
+export const reportAdminApi = {
+  invalidate: (scanId) => api.delete(`/reports/${scanId}`).then((r) => r.data),
+};
+
 // Remediation tracker (Phase 6).
 export const vulnApi = {
   markFixed: (vulnId, fixed = true) =>
