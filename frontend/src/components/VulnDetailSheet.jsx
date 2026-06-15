@@ -68,7 +68,7 @@ function SheetBody({ vuln, fixGuide, onMarkFixed, onVerify, busy }) {
             <pre className="mt-2 overflow-x-auto rounded border border-border bg-bg-inset p-2 font-mono text-xs text-fg-muted"><code>{vuln.matchPreview}</code></pre>
           )}
           <p className="mt-2 font-mono text-[11px] text-fg-subtle">
-            Full value is never stored — only this masked preview. Rotate this credential immediately.
+            Full value is never stored, only this masked preview. Rotate this credential immediately.
           </p>
         </div>
       )}
