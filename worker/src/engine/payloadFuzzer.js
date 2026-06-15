@@ -30,6 +30,8 @@ export async function fuzzEndpoint(endpoint, http, opts = {}) {
     const payloads = await loadPayloads(param.attackTypes, {
       cap: opts.maxPayloads || 50,
       model: opts.payloadModel,
+      param: param.name,
+      paramContext: `category=${param.category || 'GENERIC'} inputType=${param.inputType || 'text'}`,
     });
 
     // Establish baseline.
